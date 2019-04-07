@@ -76,6 +76,9 @@ sql_init(void)
 
 	sql_stmt_cache_init();
 
+	if (llvm_init() != 0)
+		panic("failed to initialize LLVM JIT subsystem");
+
 	assert(db != NULL);
 }
 

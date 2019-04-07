@@ -40,6 +40,8 @@
 #include "box/schema.h"
 #include "box/session.h"
 
+#include "vdbe_jit.h"
+
 /* Forward declarations */
 static void exprCodeBetween(Parse *, Expr *, int,
 			    void (*)(Parse *, Expr *, int, int), int);
@@ -2109,6 +2111,66 @@ exprIsConst(Expr * p, int initFlag, int iCur)
 	w.u.iCur = iCur;
 	sqlWalkExpr(&w, p);
 	return w.eCode;
+}
+
+/**
+ * In current implementation only constant expressions containing
+ * integer literals and binary operations can be jitted.
+ */
+static int
+expr_node_can_be_jitted(struct Walker *walker, struct Expr *expr)
+{
+	switch (expr->op) {
+		case TK_FUNCTION:
+		case TK_BETWEEN:
+		case TK_IN:
+		case TK_VARIABLE:
+		case TK_AGG_FUNCTION:
+			walker->eCode = 0;
+			return WRC_Abort;
+		default:
+			return WRC_Continue;
+	}
+}
+
+bool
+expr_can_be_jitted(struct Expr *expr)
+{
+	Walker w;
+	memset(&w, 0, sizeof(w));
+	w.eCode = 1;
+	w.xExprCallback = expr_node_can_be_jitted;
+	/* If expr contains sub-select - JIT is unavailable. */
+	w.xSelectCallback = selectNodeIsConstant;
+	sqlWalkExpr(&w, expr);
+	return w.eCode;
+}
+
+bool
+expr_list_can_be_jitted(struct ExprList *expr_list)
+{
+	if (! jit_is_enabled())
+		return false;
+	int space_cursor = expr_list->a[0].pExpr->iTable;
+	uint32_t total_height = 0;
+	for (int i = 0; i < expr_list->nExpr; ++i) {
+		struct Expr *expr = expr_list->a[i].pExpr;
+		if (! expr_can_be_jitted(expr))
+			return false;
+		if (space_cursor != expr->iTable)
+			return false;
+		total_height += expr->nHeight;
+	}
+	if (total_height < JIT_MIN_TOTAL_EXPR_HEIGHT)
+		return false;
+//	struct space *space = space_by_id(expr_list->a[0].pExpr->space_def->id);
+//	if (space != NULL) {
+//		struct index *pk = space->index[0];
+//		if (pk != NULL &&
+//		    pk->vtab->count(pk, ITER_ALL, NULL, 0) < JIT_MIN_TUPLE_COUNT)
+//			return false;
+//	}
+	return true;
 }
 
 /*
@@ -4571,6 +4633,35 @@ sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
 	n = pList->nExpr;
 	if (!ConstFactorOk(pParse))
 		flags &= ~SQL_ECEL_FACTOR;
+	if (! pParse->avoid_jit && expr_list_can_be_jitted(pList)) {
+		struct jit_compile_context *ctx = parse_get_jit_context(pParse);
+		if (ctx == NULL)
+			return -1;
+		if (jit_expr_emit_start(ctx, n) != 0) {
+			pParse->is_aborted = true;
+			return -1;
+		}
+		int cursor = pList->a[0].pExpr->iTable;
+		for (int i = 0; i < pList->nExpr; ++i) {
+			struct Expr *expr = pList->a[i].pExpr;
+			assert(expr->iTable == cursor);
+			if (jit_emit_expr(ctx, expr, i) != 0) {
+				pParse->is_aborted = true;
+				return -1;
+			}
+		}
+		if (ctx->func_ctx->strategy != COMPILE_EXPR_AGG) {
+			if (jit_expr_emit_finish(ctx) != 0) {
+				pParse->is_aborted = true;
+				return -1;
+			}
+			vdbe_add_jit_op(v, cursor + 1, target, ctx->func_ctx,
+					"JIT for result set epxr list");
+			return n;
+		}
+		return 0;
+	}
+
 	for (pItem = pList->a, i = 0; i < n; i++, pItem++) {
 		Expr *pExpr = pItem->pExpr;
 		if ((flags & SQL_ECEL_REF) != 0

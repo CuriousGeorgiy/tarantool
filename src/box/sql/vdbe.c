@@ -49,6 +49,7 @@
 #include "mem.h"
 #include "vdbeInt.h"
 #include "tarantoolInt.h"
+#include "vdbe_jit.h"
 
 #include "msgpuck/msgpuck.h"
 #include "mpstream/mpstream.h"
@@ -4116,6 +4117,50 @@ case OP_LoadAnalysis: {
 	if (sql_analysis_load(db) != 0)
 		goto abort_due_to_error;
 	*/
+	break;
+}
+
+/**
+ * Opcode: JitExecuteExpr P1 P2 * * P5
+ *
+ * P1 is a cursor containing tuple to provide fields.
+ * P2 contains * range of * memory cells where result of
+ * execution will be saved.
+ *
+ * P5 defines pattern of jitted function: whether it's expr
+ * execution with saving result in output memory; dump result
+ * to port; or evaluating predicate and take a jump.
+ **/
+case OP_JitExecuteExpr: {        /* jump */
+	struct VdbeCursor *cursor = p->apCsr[pOp->p1];
+	struct Mem *output = NULL;
+	struct Mem tmp = { .u.i = 1 };
+	switch (pOp->p5) {
+		case COMPILE_EXPR_RS:
+			output = out2Prerelease(p, pOp);
+			break;
+		case COMPILE_EXPR_WHERE_COND:
+			output = &tmp;
+			break;
+		case COMPILE_EXPR_AGG:
+			output = out2Prerelease(p, pOp);
+			output->flags = 0;
+			pOp->p5 = COMPILE_EXPR_AGG_STEP;
+			break;
+		case COMPILE_EXPR_AGG_STEP:
+			output = &aMem[pOp->p2];
+			break;
+		default: unreachable();
+	}
+	if (jit_execute(p->jit_context, cursor->uc.pCursor->last_tuple,
+			pOp->p4.z, output) != 0) {
+		rc = SQL_TARANTOOL_ERROR;
+		goto abort_due_to_error;
+	}
+	if (pOp->p5 == COMPILE_EXPR_WHERE_COND) {
+		if (! output->u.b)
+			goto jump_to_p2;
+	}
 	break;
 }
 

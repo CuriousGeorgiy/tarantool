@@ -318,6 +318,15 @@ sqlStep(Vdbe * p)
 	return rc;
 }
 
+void
+sql_set_port(struct sql_stmt *stmt, struct port *port)
+{
+	assert(port != NULL);
+	struct Vdbe *v = (struct Vdbe *) stmt;
+	if (v->jit_on)
+		v->port = port;
+}
+
 /*
  * This is the top-level implementation of sql_step().  Call
  * sqlStep() to do most of the work.  If a schema error occurs,

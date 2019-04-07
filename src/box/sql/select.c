@@ -41,6 +41,7 @@
 #include "box/box.h"
 #include "box/coll_id_cache.h"
 #include "box/schema.h"
+#include "vdbe_jit.h"
 
 /*
  * Trace output macros
@@ -1064,6 +1065,8 @@ selectInnerLoop(Parse * pParse,		/* The parser context */
 			       || eDest == SRT_Coroutine
 			       || eDest == SRT_Output);
 		}
+		struct jit_compile_context *ctx = parse_get_jit_context(pParse);
+		ctx->func_ctx->strategy = COMPILE_EXPR_RS;
 		nResultCol =
 		    sqlExprCodeExprList(pParse, pEList, regResult, 0,
 					    ecelFlags);
@@ -1093,7 +1096,7 @@ selectInnerLoop(Parse * pParse,		/* The parser context */
 				 *
 				 * Change to an OP_Null sets the
 				 * Cleared flag on the first
-				 * register of the previous value. 
+				 * register of the previous value.
 				 * This will cause the OP_Ne below
 				 * to always fail on the first
 				 * iteration of the loop even if
@@ -2092,6 +2095,7 @@ allocVdbe(Parse * pParse)
 	    ) {
 		pParse->okConstFactor = 1;
 	}
+
 	return v;
 }
 
@@ -5373,12 +5377,28 @@ finalizeAggFunctions(Parse * pParse, AggInfo * pAggInfo)
 	int i;
 	struct AggInfo_func *pF;
 	for (i = 0, pF = pAggInfo->aFunc; i < pAggInfo->nFunc; i++, pF++) {
+		if (pF->is_jitted)
+			continue;
 		ExprList *pList = pF->pExpr->x.pList;
 		assert(!ExprHasProperty(pF->pExpr, EP_xIsSelect));
 		sqlVdbeAddOp2(v, OP_AggFinal, pF->iMem,
 				  pList ? pList->nExpr : 0);
 		sqlVdbeAppendP4(v, pF->func, P4_FUNC);
 	}
+}
+
+static bool
+agg_can_be_jitted(const struct AggInfo_func *agg)
+{
+	if (! jit_is_enabled())
+		return false;
+	if (strcmp(agg->pFunc->zName, "max") == 0)
+		return true;
+	if (strcmp(agg->pFunc->zName, "count") == 0)
+		return true;
+	if (strcmp(agg->pFunc->zName, "sum") == 0)
+		return true;
+	return false;
 }
 
 /*
@@ -5402,9 +5422,19 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 		int regAgg;
 		ExprList *pList = pF->pExpr->x.pList;
 		assert(!ExprHasProperty(pF->pExpr, EP_xIsSelect));
+		bool can_be_jitted = agg_can_be_jitted(pF);
+		struct jit_compile_context *ctx = NULL;
+		if (can_be_jitted) {
+			ctx = parse_get_jit_context(pParse);
+			if (ctx == NULL)
+				return;
+			ctx->func_ctx->strategy = COMPILE_EXPR_AGG;
+		}
 		if (pList) {
 			nArg = pList->nExpr;
 			regAgg = sqlGetTempRange(pParse, nArg);
+			if (! can_be_jitted)
+				pParse->avoid_jit = true;
 			sqlExprCodeExprList(pParse, pList, regAgg, 0,
 						SQL_ECEL_DUP);
 		} else {
@@ -5418,7 +5448,9 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 			vdbe_insert_distinct(pParse, pF->iDistinct, pF->reg_eph,
 					     addrNext, 1, regAgg);
 		}
-		if (sql_func_flag_is_set(pF->func, SQL_FUNC_NEEDCOLL)) {
+
+		if (sql_func_flag_is_set(pF->func, SQL_FUNC_NEEDCOLL) && !can_be_jitted) {
+
 			struct coll *coll = NULL;
 			struct ExprList_item *pItem;
 			int j;
@@ -5436,9 +5468,25 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 			sqlVdbeAddOp4(v, OP_CollSeq, regHit, 0, 0,
 					  (char *)coll, P4_COLLSEQ);
 		}
-		sqlVdbeAddOp3(v, OP_AggStep0, 0, regAgg, pF->iMem);
-		sqlVdbeAppendP4(v, pF->func, P4_FUNC);
-		sqlVdbeChangeP5(v, (u8) nArg);
+
+		if (can_be_jitted) {
+			if (jit_emit_agg(ctx, pF->pFunc->zName) != 0) {
+				pParse->is_aborted = true;
+				return;
+			}
+			if (jit_expr_emit_finish(ctx) != 0) {
+				pParse->is_aborted = true;
+				return;
+			}
+			pF->is_jitted = true;
+			vdbe_add_jit_op(v, 1, pF->iMem, ctx->func_ctx,
+					"JIT for aggregate");
+		} else {
+			sqlVdbeAddOp3(v, OP_AggStep0, 0, regAgg, pF->iMem);
+			sqlVdbeAppendP4(v, pF->pFunc, P4_FUNCDEF);
+			sqlVdbeChangeP5(v, (u8) nArg);
+		}
+
 		sql_expr_type_cache_change(pParse, regAgg, nArg);
 		sqlReleaseTempRange(pParse, regAgg, nArg);
 		if (addrNext) {

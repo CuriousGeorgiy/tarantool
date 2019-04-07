@@ -23,6 +23,9 @@ lua_source(lua_sources lua/merger.lua)
 set(bin_sources)
 bin_source(bin_sources bootstrap.snap bootstrap.h)
 
+add_library(jit_types STATIC sql/jit_types.c)
+target_compile_options(jit_types PUBLIC -emit-llvm)
+
 set(sql_sources
     sql/opcodes.c
     sql/parse.c
@@ -39,6 +42,7 @@ set(sql_sources
     sql/global.c
     sql/hash.c
     sql/insert.c
+    sql/jit_cb.c
     sql/legacy.c
     sql/main.c
     sql/malloc.c
@@ -59,6 +63,7 @@ set(sql_sources
     sql/update.c
     sql/util.c
     sql/vdbe.c
+    sql/vdbe_jit.c
     sql/vdbeapi.c
     sql/vdbeaux.c
     sql/vdbemem.c
@@ -69,6 +74,12 @@ set(sql_sources
     sql/wherecode.c
     sql/whereexpr.c
 )
+
+find_package(LLVM REQUIRED CONFIG)
+llvm_map_components_to_libnames(llvm_libs core mcjit ipo orcjit executionengine interpreter mc AllTargetsAsmParsers support nativecodegen)
+separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
+include_directories(/usr/include/llvm-c-10)
 
 add_custom_target(box_generate_lua_sources
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/src/box
@@ -264,6 +275,6 @@ add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.c
         ${SQL_BIN_DIR}/opcodes.h)
 
 target_link_libraries(box box_error tuple stat xrow xlog vclock crc32 scramble
-                      raft ${common_libraries})
+                      raft ${common_libraries} ${llvm_libs})
 
 add_dependencies(box build_bundled_libs generate_sql_files)

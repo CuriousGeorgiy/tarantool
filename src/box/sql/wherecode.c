@@ -42,6 +42,8 @@
 #include "sqlInt.h"
 #include "whereInt.h"
 
+#include "vdbe_jit.h"
+
 /*
  * Return the name of the i-th column of the pIdx index.
  */
@@ -768,6 +770,25 @@ codeExprOrVector(Parse * pParse, Expr * p, int iReg, int nReg)
 		assert(nReg == 1);
 		sqlExprCode(pParse, p, iReg);
 	}
+}
+
+static bool
+where_clause_can_be_jitted(struct WhereClause *where, int scan_alg)
+{
+	if (! jit_is_enabled())
+		return false;
+	if (scan_alg != SQL_STMTSTATUS_FULLSCAN_STEP)
+		return false;
+	if (where->nTerm == 0)
+		return false;
+	if (where->pWInfo->pTabList->nSrc > 1)
+		return false;
+	struct WhereTerm *term = where->a;
+	for (int i = 0; i < where->nTerm; i++, term++) {
+		if (! expr_can_be_jitted(term->pExpr))
+			return false;
+	}
+	return true;
 }
 
 /*
@@ -1588,6 +1609,16 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 	/* Insert code to test every subexpression that can be completely
 	 * computed using the current set of tables.
 	 */
+	bool can_be_jitted = where_clause_can_be_jitted(pWC, pLevel->p5);
+
+	struct jit_compile_context *ctx = NULL;
+	if (can_be_jitted) {
+		ctx = parse_get_jit_context(pParse);
+		if (ctx == NULL)
+			return 0;
+		jit_expr_emit_start(ctx, 1);
+		ctx->func_ctx->strategy = COMPILE_EXPR_WHERE_COND;
+	}
 	for (pTerm = pWC->a, j = pWC->nTerm; j > 0; j--, pTerm++) {
 		Expr *pE;
 		int skipLikeAddr = 0;
@@ -1616,10 +1647,24 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			 */
 			continue;
 		}
-		sqlExprIfFalse(pParse, pE, addrCont, SQL_JUMPIFNULL);
+		if (can_be_jitted) {
+			if (jit_emit_expr(ctx, pE, 0) != 0) {
+				pParse->is_aborted = true;
+				return 0;
+			}
+		} else {
+			sqlExprIfFalse(pParse, pE, addrCont, SQL_JUMPIFNULL);
+		}
 		if (skipLikeAddr)
 			sqlVdbeJumpHere(v, skipLikeAddr);
 		pTerm->wtFlags |= TERM_CODED;
+	}
+	if (can_be_jitted) {
+		if (jit_expr_emit_finish(ctx) != 0) {
+			pParse->is_aborted = true;
+			return 0;
+		}
+		vdbe_add_jit_op(v, 1, addrCont, ctx->func_ctx, "JIT for WHERE cond");
 	}
 
 	/* Insert code to test for implied constraints based on transitivity

@@ -7,6 +7,7 @@ enum
 	PRAGMA_INDEX_LIST,
 	PRAGMA_STATS,
 	PRAGMA_TABLE_INFO,
+	PRAGMA_VDBE_JIT
 };
 
 /**
@@ -78,6 +79,9 @@ static const char *const pragCName[] = {
 	/*  55 */ "text",
 	/*  56 */ "match",
 	/*  57 */ "text",
+    /* Used by: vdbe_jit */
+    /*  58 */ "vdbe_jit",
+    /*  59 */ "integer",
 };
 
 /** Definitions of all built-in pragmas */
@@ -99,6 +103,7 @@ struct PragmaName {
 static const struct PragmaName aPragmaName[] = {
 	{"collation_list", PRAGMA_COLLATION_LIST, 38, 2},
 	{"foreign_key_list", PRAGMA_FOREIGN_KEY_LIST, 42, 8},
+    {"vdbe_jit", PRAGMA_VDBE_JIT, 58, 1},
 	{"index_info", PRAGMA_INDEX_INFO, 20, 6},
 	{"index_list", PRAGMA_INDEX_LIST, 32, 3},
 	{"stats", PRAGMA_STATS, 12, 4},

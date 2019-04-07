@@ -412,6 +412,7 @@ sqlInsert(Parse * pParse,	/* Parser context */
 		sqlSelectDestInit(&dest, SRT_Coroutine, regYield, -1);
 		dest.iSdst = bIdListInOrder ? regData : 0;
 		dest.nSdst = space_def->field_count;
+		pParse->avoid_jit = true;
 		rc = sqlSelect(pParse, pSelect, &dest);
 		regFromSelect = dest.iSdst;
 		if (rc || db->mallocFailed || pParse->is_aborted)
