@@ -1643,7 +1643,9 @@ xrow_encode_join(struct xrow_header *row, const struct tt_uuid *instance_uuid)
 }
 
 int
-xrow_encode_vclock(struct xrow_header *row, const struct vclock *vclock)
+xrow_encode_vclock_timed(struct xrow_header *row,
+			 const struct vclock *vclock,
+			 double tm)
 {
 	memset(row, 0, sizeof(*row));
 
@@ -1662,6 +1664,7 @@ xrow_encode_vclock(struct xrow_header *row, const struct vclock *vclock)
 	row->body[0].iov_base = buf;
 	row->body[0].iov_len = (data - buf);
 	row->bodycnt = 1;
+	row->tm = tm;
 	row->type = IPROTO_OK;
 	return 0;
 }

@@ -496,6 +496,20 @@ xrow_decode_register(struct xrow_header *row, struct tt_uuid *instance_uuid,
 }
 
 /**
+ * Encode vector clock with timestamp.
+ * @param row[out] Row to encode into.
+ * @param vclock vector clock to encode.
+ * @param tm timestamp.
+ *
+ * @retval  0 Success.
+ * @retval -1 Memory error.
+ */
+int
+xrow_encode_vclock_timed(struct xrow_header *row,
+			 const struct vclock *vclock,
+			 double tm);
+
+/**
  * Encode end of stream command (a response to JOIN command).
  * @param row[out] Row to encode into.
  * @param vclock.
@@ -503,8 +517,11 @@ xrow_decode_register(struct xrow_header *row, struct tt_uuid *instance_uuid,
  * @retval  0 Success.
  * @retval -1 Memory error.
  */
-int
-xrow_encode_vclock(struct xrow_header *row, const struct vclock *vclock);
+static inline int
+xrow_encode_vclock(struct xrow_header *row, const struct vclock *vclock)
+{
+	return xrow_encode_vclock_timed(row, vclock, 0);
+}
 
 /**
  * Decode end of stream command (a response to JOIN command).
