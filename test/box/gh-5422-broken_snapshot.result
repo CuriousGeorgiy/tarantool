@@ -69,7 +69,7 @@ test_run:cmd("setopt delimiter ''");
 garbage_size = 500
 ---
 ...
-corruption_offset = 15000
+corruption_offset = 5000
 ---
 ...
 test_run:cmd("create server test with script='box/gh-5422-broken_snapshot.lua'")
@@ -181,10 +181,6 @@ assert(valid_data_count_2 > 0)
 ---
 - true
 ...
-assert(valid_data_count_2 > valid_data_count_1)
----
-- true
-...
 -- Restore snapshot and write big garbage at the start of the file
 write_garbage_with_restore_or_save(snapshot, 5000, garbage_size, true)
 ---
@@ -202,11 +198,14 @@ test_run:cmd("start server test with crash_expected=True")
 ---
 - false
 ...
-log = string.format("%s/%s.%s", fio.cwd(), "gh-5422-broken_snapshot", "log")
+opts = {}
 ---
 ...
--- We must not find ER_UNKNOWN_REPLICA in log file, so grep return not 0
-assert(os.execute(string.format("cat %s | grep ER_UNKNOWN_REPLICA:", log)) ~= 0)
+opts.filename = 'gh-5422-broken_snapshot.log'
+---
+...
+-- We must not find ER_UNKNOWN_REPLICA in log file
+assert(test_run:grep_log("test", "ER_UNKNOWN_REPLICA", nil, opts) == nil)
 ---
 - true
 ...

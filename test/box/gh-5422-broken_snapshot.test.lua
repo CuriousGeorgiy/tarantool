@@ -49,7 +49,7 @@ end;
 test_run:cmd("setopt delimiter ''");
 
 garbage_size = 500
-corruption_offset = 15000
+corruption_offset = 5000
 
 test_run:cmd("create server test with script='box/gh-5422-broken_snapshot.lua'")
 test_run:cmd("start server test")
@@ -92,7 +92,6 @@ test_run:cmd("switch default")
 -- Count of valid data is greater than we truncate snapshot.
 valid_data_count_2 = check_count_valid_snapshot_data(items_count)
 assert(valid_data_count_2 > 0)
-assert(valid_data_count_2 > valid_data_count_1)
 
 -- Restore snapshot and write big garbage at the start of the file
 write_garbage_with_restore_or_save(snapshot, 5000, garbage_size, true)
@@ -100,8 +99,9 @@ os.remove(string.format('%s.save', snapshot))
 test_run:cmd("stop server test")
 -- Check that we unable to start with corrupted system space
 test_run:cmd("start server test with crash_expected=True")
-log = string.format("%s/%s.%s", fio.cwd(), "gh-5422-broken_snapshot", "log")
--- We must not find ER_UNKNOWN_REPLICA in log file, so grep return not 0
-assert(os.execute(string.format("cat %s | grep ER_UNKNOWN_REPLICA:", log)) ~= 0)
+opts = {}
+opts.filename = 'gh-5422-broken_snapshot.log'
+-- We must not find ER_UNKNOWN_REPLICA in log file
+assert(test_run:grep_log("test", "ER_UNKNOWN_REPLICA", nil, opts) == nil)
 test_run:cmd("cleanup server test")
 test_run:cmd("delete server test")
