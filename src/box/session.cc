@@ -140,6 +140,8 @@ session_create(enum session_type type)
 	session->id = sid_max();
 	session->graceful_shutdown = false;
 	session->requests_count = 0;
+	session->client_shutdown_got = false;
+	fiber_cond_create(&session->shutdown_cond);
 	memset(&session->meta, 0, sizeof(session->meta));
 	session_set_type(session, type);
 	session->sql_flags = default_flags;
@@ -162,6 +164,34 @@ session_create(enum session_type type)
 	rlist_create(&session->in_active_list);
 	rlist_add_entry(&active_sessions, session, in_active_list);
 	return session;
+}
+
+struct session *
+next_session(struct session *session)
+{
+	struct rlist *next_rlist;
+	if (session == NULL)
+		next_rlist = rlist_first(&active_sessions);
+	else
+		next_rlist = rlist_next(&session->in_active_list);
+	if (next_rlist == &active_sessions)
+		return NULL;
+	else
+		return container_of(next_rlist, struct session, in_active_list);
+}
+
+bool
+is_shutdown_ready(struct session *session)
+{
+	return session->requests_count == 0 &&
+	       (!session->graceful_shutdown || session->client_shutdown_got);
+}
+
+void
+wait_shutdown_ready(struct session *session)
+{
+	if(!is_shutdown_ready(session))
+		fiber_cond_wait(&session->shutdown_cond);
 }
 
 struct session *

@@ -1,6 +1,7 @@
 -- schema.lua (internal file)
 --
 local ffi = require('ffi')
+local fiber = require('fiber')
 local msgpack = require('msgpack')
 local fun = require('fun')
 local log = require('log')
@@ -62,6 +63,13 @@ ffi.cdef[[
     ssize_t
     box_index_count(uint32_t space_id, uint32_t index_id, int type,
                     const char *key, const char *key_end);
+    bool
+    is_shutdown_ready(struct session* session);
+    struct session *
+    next_session(struct session *session);
+    void
+    wait_shutdown_ready(struct session *session);
+
     /** \endcond public */
     /** \cond public */
     bool
@@ -3147,3 +3155,31 @@ end
 setmetatable(box.space, { __serialize = box_space_mt })
 
 box.NULL = msgpack.NULL
+
+local function active_sessions()
+    local cur_session = builtin.next_session(ffi.NULL)
+    return function ()
+        if cur_session ~= ffi.NULL then
+            local prev_session = cur_session
+            cur_session = builtin.next_session(cur_session)
+            return prev_session
+        end
+        return nil
+    end
+end
+
+
+box.ctl.on_shutdown(function()
+    fiber.yield()
+    local exists_active_session = true
+    while exists_active_session do
+        exists_active_session = false
+        for session in active_sessions() do
+            if not builtin.is_shutdown_ready(session) then
+                exists_active_session = true
+                builtin.wait_shutdown_ready(session)
+                break
+            end
+        end
+    end
+end)
