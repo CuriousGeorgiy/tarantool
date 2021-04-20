@@ -109,6 +109,8 @@ struct session {
 	bool graceful_shutdown;
 	/** Number of active requests in session  */
 	int requests_count;
+	bool client_shutdown_got;
+	struct fiber_cond shutdown_cond;
 	/** SQL Tarantool Default storage engine. */
 	uint8_t sql_default_engine;
 	/** SQL Connection flag for current user session */
@@ -188,6 +190,21 @@ extern struct rlist session_on_auth;
 
 /** Global list with all active sessions. */
 extern struct rlist active_sessions;
+
+/**
+ * Get next session in order of active_sessions list
+ * @param session session
+ * @retval NULL if session is last in list
+ * @retval session next session
+ */
+struct session *
+next_session(struct session *session);
+
+bool
+is_shutdown_ready(struct session *session);
+
+void
+wait_shutdown_ready(struct session *session);
 
 /**
  * Get the current session from @a fiber

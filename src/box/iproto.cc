@@ -1520,6 +1520,8 @@ tx_finish_request(struct cmsg* m)
 	struct session *session = msg->connection->session;
 	session->requests_count--;
 	assert(session->requests_count >= 0);
+	if (is_shutdown_ready(session))
+		fiber_cond_broadcast(&session->shutdown_cond);
 }
 
 static void
