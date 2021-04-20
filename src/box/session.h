@@ -107,6 +107,8 @@ struct session {
 	uint64_t id;
 	/** Support of graceful shutdown. */
 	bool graceful_shutdown;
+	/** Number of active requests in session  */
+	int requests_count;
 	/** SQL Tarantool Default storage engine. */
 	uint8_t sql_default_engine;
 	/** SQL Connection flag for current user session */

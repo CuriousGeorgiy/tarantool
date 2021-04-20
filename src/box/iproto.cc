@@ -1505,6 +1505,23 @@ tx_inject_delay(void)
 	});
 }
 
+static inline void
+tx_start_request(struct cmsg *m)
+{
+	struct iproto_msg *msg = container_of(m, struct iproto_msg, base);
+	struct session *session = msg->connection->session;
+	session->requests_count++;
+}
+
+static inline void
+tx_finish_request(struct cmsg* m)
+{
+	struct iproto_msg *msg = container_of(m, struct iproto_msg, base);
+	struct session *session = msg->connection->session;
+	session->requests_count--;
+	assert(session->requests_count >= 0);
+}
+
 static void
 tx_process1(struct cmsg *m)
 {
@@ -1529,6 +1546,14 @@ tx_process1(struct cmsg *m)
 	return;
 error:
 	tx_reply_error(msg);
+}
+
+static void
+tx_process1_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process1(m);
+	tx_finish_request(m);
 }
 
 static void
@@ -1572,6 +1597,14 @@ tx_process_select(struct cmsg *m)
 	return;
 error:
 	tx_reply_error(msg);
+}
+
+static void
+tx_process_select_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process_select(m);
+	tx_finish_request(m);
 }
 
 static int
@@ -1665,6 +1698,14 @@ error:
 }
 
 static void
+tx_process_call_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process_call(m);
+	tx_finish_request(m);
+}
+
+static void
 tx_process_misc(struct cmsg *m)
 {
 	struct iproto_msg *msg = tx_accept_msg(m);
@@ -1705,6 +1746,14 @@ tx_process_misc(struct cmsg *m)
 	return;
 error:
 	tx_reply_error(msg);
+}
+
+static void
+tx_process_misc_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process_misc(m);
+	tx_finish_request(m);
 }
 
 static void
@@ -1804,6 +1853,14 @@ error:
 }
 
 static void
+tx_process_sql_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process_sql(m);
+	tx_finish_request(m);
+}
+
+static void
 tx_process_replication(struct cmsg *m)
 {
 	struct iproto_msg *msg = tx_accept_msg(m);
@@ -1844,6 +1901,14 @@ tx_process_replication(struct cmsg *m)
 		iproto_write_error(con->input.fd, e, ::schema_version,
 				   msg->header.sync);
 	}
+}
+
+static void
+tx_process_replication_guarded(struct cmsg *m)
+{
+	tx_start_request(m);
+	tx_process_replication(m);
+	tx_finish_request(m);
 }
 
 static void
@@ -2173,25 +2238,25 @@ iproto_thread_init_routes(struct iproto_thread *iproto_thread)
 	iproto_thread->disconnect_route[1] =
 		{ net_finish_disconnect, NULL };
 	iproto_thread->misc_route[0] =
-		{ tx_process_misc, &iproto_thread->net_pipe };
+		{ tx_process_misc_guarded, &iproto_thread->net_pipe };
 	iproto_thread->misc_route[1] = { net_send_msg, NULL };
 	iproto_thread->call_route[0] =
-		{ tx_process_call, &iproto_thread->net_pipe };
+		{ tx_process_call_guarded, &iproto_thread->net_pipe };
 	iproto_thread->call_route[1] = { net_send_msg, NULL };
 	iproto_thread->select_route[0] =
-		{ tx_process_select, &iproto_thread->net_pipe };
+		{ tx_process_select_guarded, &iproto_thread->net_pipe };
 	iproto_thread->select_route[1] = { net_send_msg, NULL };
 	iproto_thread->process1_route[0] =
-		{ tx_process1, &iproto_thread->net_pipe };
+		{ tx_process1_guarded, &iproto_thread->net_pipe };
 	iproto_thread->process1_route[1] = { net_send_msg, NULL };
 	iproto_thread->sql_route[0] =
-		{ tx_process_sql, &iproto_thread->net_pipe };
+		{ tx_process_sql_guarded, &iproto_thread->net_pipe };
 	iproto_thread->sql_route[1] = { net_send_msg, NULL };
 	iproto_thread->join_route[0] =
-		{ tx_process_replication, &iproto_thread->net_pipe };
+		{ tx_process_replication_guarded, &iproto_thread->net_pipe };
 	iproto_thread->join_route[1] = { net_end_join, NULL };
 	iproto_thread->subscribe_route[0] =
-		{ tx_process_replication, &iproto_thread->net_pipe };
+		{ tx_process_replication_guarded, &iproto_thread->net_pipe };
 	iproto_thread->subscribe_route[1] = { net_end_subscribe, NULL };
 	iproto_thread->error_route[0] =
 		{ tx_reply_iproto_error, &iproto_thread->net_pipe };
