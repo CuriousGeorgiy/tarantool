@@ -1,0 +1,229 @@
+-- test-run result file version 2
+net_box = require('net.box')
+ | ---
+ | ...
+fiber = require('fiber')
+ | ---
+ | ...
+env = require('test_run')
+ | ---
+ | ...
+test_run = env.new()
+ | ---
+ | ...
+
+------------------------------------------------------------
+-- When receiving a shutdown signal server
+-- should stop accept new connections,
+-- close for read existing not graceful connections
+-- and do some work before the shutdown is complete
+------------------------------------------------------------
+
+box.schema.user.grant('guest','execute,write,read','universe', nil, {if_not_exists = true})
+ | ---
+ | ...
+
+_ = box.schema.space.create('counter')
+ | ---
+ | ...
+_ = box.space.counter:create_index('primary')
+ | ---
+ | ...
+
+test_run:cmd("create server remote with script='box/graceful_shutdown.lua'")
+ | ---
+ | - true
+ | ...
+test_run:cmd("start server remote")
+ | ---
+ | - true
+ | ...
+test_run:cmd("switch remote")
+ | ---
+ | - true
+ | ...
+fiber = require('fiber')
+ | ---
+ | ...
+function exit() fiber.new(function() os.exit() end) return 'exit scheduled' end
+ | ---
+ | ...
+net_box = require('net.box')
+ | ---
+ | ...
+test_run:cmd("set variable def_uri to 'default.listen'")
+ | ---
+ | - true
+ | ...
+def_con = net_box.connect(def_uri)
+ | ---
+ | ...
+test_run:cmd("setopt delimiter ';'")
+ | ---
+ | - true
+ | ...
+function check(t)
+    fiber.sleep(t)
+    def_con:call('box.space.counter:auto_increment',
+                 {{'sleep ' .. tostring(t)}})
+end;
+ | ---
+ | ...
+test_run:cmd("switch default");
+ | ---
+ | - true
+ | ...
+
+test_run:cmd("set variable remote_uri to 'remote.listen'");
+ | ---
+ | - true
+ | ...
+remote_con = net_box.connect(remote_uri);
+ | ---
+ | ...
+remote_con:set_shutdown_handler(function()
+    box.space.counter:auto_increment{'unreachable'}
+end);
+ | ---
+ | ...
+graceful_con = net_box.connect(remote_uri);
+ | ---
+ | ...
+graceful_con.space._session_settings:update('graceful_shutdown',
+                                            {{'=', 'value', true}});
+ | ---
+ | - ['graceful_shutdown', true]
+ | ...
+graceful_con:set_shutdown_handler(function()
+    box.space.counter:auto_increment{'shutdown receive'}
+end);
+ | ---
+ | ...
+for time = 1.5, 10, 3 do
+    remote_con:call('check', {time}, {is_async=true})
+end;
+ | ---
+ | ...
+test_run:cmd("setopt delimiter ''");
+ | ---
+ | - true
+ | ...
+
+fiber.sleep(0.1)
+ | ---
+ | ...
+remote_con:call('exit')
+ | ---
+ | - exit scheduled
+ | ...
+fiber.sleep(0.1)
+ | ---
+ | ...
+net_box.connect(remote_uri).state
+ | ---
+ | - error
+ | ...
+remote_con:ping()
+ | ---
+ | - false
+ | ...
+graceful_con:ping()
+ | ---
+ | - false
+ | ...
+graceful_con:shutdown()
+ | ---
+ | - false
+ | ...
+graceful_con:ping()
+ | ---
+ | - false
+ | ...
+
+fiber.sleep(5)
+ | ---
+ | ...
+box.space.counter:select()
+ | ---
+ | - - [1, 'shutdown receive']
+ |   - [2, 'sleep 1.5']
+ | ...
+box.space.counter:drop()
+ | ---
+ | ...
+test_run:cmd("stop server remote")
+ | ---
+ | - true
+ | ...
+
+---------------------------------------------------------------
+-- Every graceful connection has only his shutdown handler.
+---------------------------------------------------------------
+
+test_run:cmd("start server remote")
+ | ---
+ | - true
+ | ...
+test_run:cmd("switch remote")
+ | ---
+ | - true
+ | ...
+fiber = require('fiber')
+ | ---
+ | ...
+function exit() fiber.new(function() os.exit() end) return 'exit scheduled' end
+ | ---
+ | ...
+test_run:cmd("switch default")
+ | ---
+ | - true
+ | ...
+test_run:cmd("set variable remote_uri to 'remote.listen'")
+ | ---
+ | - true
+ | ...
+graceful_cons = {}
+ | ---
+ | ...
+cons = {}
+ | ---
+ | ...
+counter = 0
+ | ---
+ | ...
+test_run:cmd("setopt delimiter ';'")
+ | ---
+ | - true
+ | ...
+for i=1,100 do
+    graceful_cons[i] = net_box.connect(remote_uri)
+    cons[i] = net_box.connect(remote_uri)
+    graceful_cons[i].space._session_settings:update('graceful_shutdown',
+                                                    {{'=', 'value', true}})
+    graceful_cons[i]:set_shutdown_handler(function() counter = counter + i end)
+    cons[i]:set_shutdown_handler(function() counter = counter + i end)
+end;
+ | ---
+ | ...
+test_run:cmd("setopt delimiter ''");
+ | ---
+ | - true
+ | ...
+net_box.connect(remote_uri):call('exit')
+ | ---
+ | - exit scheduled
+ | ...
+fiber.sleep(1)
+ | ---
+ | ...
+counter
+ | ---
+ | - 5050
+ | ...
+test_run:cmd("delete server remote")
+ | ---
+ | - true
+ | ...
+box.schema.user.revoke('guest','execute,write,read','universe')
+ | ---
+ | ...
