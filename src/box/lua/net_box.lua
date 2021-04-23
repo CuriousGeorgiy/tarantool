@@ -43,6 +43,7 @@ local IPROTO_ERROR         = 0x52
 local IPROTO_GREETING_SIZE = 128
 local IPROTO_CHUNK_KEY     = 128
 local IPROTO_OK_KEY        = 0
+local IPROTO_SHUTDOWN_KEY  = 63
 
 -- select errors from box.error
 local E_UNKNOWN              = box.error.UNKNOWN
@@ -206,6 +207,7 @@ end
 -- ignore.
 --
 local function on_push_sync_default() end
+local function shutdown_handler() end
 
 --
 -- Basically, *transport* is a TCP connection speaking one of
@@ -581,12 +583,16 @@ local function create_transport(host, port, user, password, callback,
     end
 
     local function dispatch_response_iproto(hdr, body_rpos, body_end)
+        local status = hdr[IPROTO_STATUS_KEY]
+        if status == IPROTO_SHUTDOWN_KEY then
+            shutdown_handler()
+            return
+        end
         local id = hdr[IPROTO_SYNC_KEY]
         local request = requests[id]
         if request == nil then -- nobody is waiting for the response
             return
         end
-        local status = hdr[IPROTO_STATUS_KEY]
         local body
         local body_len = body_end - body_rpos
 
@@ -1216,6 +1222,10 @@ function remote_methods:ping(opts)
     return (pcall(self._request, self, 'ping', opts))
 end
 
+function remote_methods:set_shutdown_handler(handler)
+    shutdown_handler = handler
+end
+
 function remote_methods:reload_schema()
     check_remote_arg(self, 'reload_schema')
     self:ping()
@@ -1630,6 +1640,7 @@ end
 
 this_module.self = {
     ping = function() return true end,
+    set_shutdown_handler = function() end,
     reload_schema = function() end,
     close = function() end,
     timeout = function(self) return self end,
