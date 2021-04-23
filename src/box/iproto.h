@@ -69,6 +69,17 @@ size_t
 iproto_connection_count(void);
 
 /**
+ * Wait while open connections exist.
+ */
+void
+iproto_wait_close_all_connections(void);
+/**
+ * Close connections that did't stop in
+ * shutdown processing.
+ */
+void
+iproto_close_all_connections(void);
+/**
  * Return the number of iproto requests in flight.
  */
 size_t

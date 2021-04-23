@@ -63,6 +63,10 @@ ffi.cdef[[
     ssize_t
     box_index_count(uint32_t space_id, uint32_t index_id, int type,
                     const char *key, const char *key_end);
+    void
+    iproto_close_all_connections(void);
+    void
+    iproto_wait_close_all_connections(void);
     bool
     is_shutdown_ready(struct session* session);
     struct session *
@@ -3182,4 +3186,6 @@ box.ctl.on_shutdown(function()
             end
         end
     end
+    builtin.iproto_close_all_connections()
+    builtin.iproto_wait_close_all_connections()
 end)
