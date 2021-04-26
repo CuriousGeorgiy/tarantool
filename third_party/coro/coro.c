@@ -82,11 +82,7 @@
  * saved registers. Alternatively, we can pass parameters via globals at
  * the cost of 2 additional coro_transfer calls in coro_create.
  */
-# if CORO_ASM && (__arm__ || __aarch64__)
-#  define CORO_STARTUP 1
-# else
 #  define CORO_STARTUP 0
-# endif
 
 # if CORO_STARTUP
 void coro_startup(); /* custom calling convention */
@@ -485,11 +481,9 @@ coro_create (coro_context *ctx, coro_func coro, void *arg, void *sptr, size_t ss
 #elif __arm__ && __ARM_ARCH == 7
   ctx->sp[0] = coro; /* r4 */
   ctx->sp[1] = arg;  /* r5 */
-  ctx->sp[8] = (void *)coro_startup; /* lr */
 #elif __aarch64__
   ctx->sp[0] = coro; /* x19 */
   ctx->sp[1] = arg;  /* x20 */
-  ctx->sp[11] = (void *)coro_startup; /* lr */
 #else
   #error unsupported architecture
 #endif
