@@ -93,6 +93,11 @@ struct applier {
 	ev_tstamp last_row_time;
 	/** Number of seconds this replica is behind the remote master */
 	ev_tstamp lag;
+	/**
+	 * WAL time of first applied row in a transaction.
+	 * For relay statistics sake.
+	 */
+	double first_row_wal_time;
 	/** The last box_error_code() logged to avoid log flooding */
 	uint32_t last_logged_errcode;
 	/** Remote instance ID. */
