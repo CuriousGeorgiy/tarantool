@@ -184,6 +184,7 @@ replica_new(void)
 	trigger_create(&replica->on_applier_state,
 		       replica_on_applier_state_f, NULL, NULL);
 	replica->applier_sync_state = APPLIER_DISCONNECTED;
+	memset(&replica->wal_st, 0, sizeof(replica->wal_st));
 	latch_create(&replica->order_latch);
 	return replica;
 }
@@ -234,6 +235,7 @@ replica_set_id(struct replica *replica, uint32_t replica_id)
 	assert(replica_id < VCLOCK_MAX);
 	assert(replica->id == REPLICA_ID_NIL); /* replica id is read-only */
 	replica->id = replica_id;
+	replica->wal_st.replica_id = replica_id;
 
 	if (tt_uuid_is_equal(&INSTANCE_UUID, &replica->uuid)) {
 		/* Assign local replica id */
@@ -281,6 +283,7 @@ replica_clear_id(struct replica *replica)
 		instance_id = REPLICA_ID_NIL;
 	}
 	replica->id = REPLICA_ID_NIL;
+	replica->wal_st.replica_id = REPLICA_ID_NIL;
 	say_info("removed replica %s", tt_uuid_str(&replica->uuid));
 
 	/*

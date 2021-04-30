@@ -134,6 +134,20 @@ struct applier {
 };
 
 /**
+ * WAL related statistics.
+ */
+struct applier_wal_stat {
+	/** Replica ID initiated the transaction. */
+	uint32_t replica_id;
+	/**
+	 * Timestamp of a first row in a transaction
+	 * batch which is not yet ACK'ed. For relay
+	 * statistics.
+	 */
+	double first_row_tm;
+};
+
+/**
  * Start a client to a remote master using a background fiber.
  *
  * If recovery is finalized (i.e. r->writer != NULL) then the client

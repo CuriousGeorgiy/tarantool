@@ -148,6 +148,37 @@ applier_check_sync(struct applier *applier)
 	}
 }
 
+/**
+ * Update WAL statstics once transaction is written.
+ */
+static void
+wal_stat_update(struct applier_wal_stat *wal_st)
+{
+	struct replica *r = replica_by_id(wal_st->replica_id);
+	if (likely(r != NULL)) {
+		assert(wal_st->replica_id == r->wal_st.replica_id);
+		if (r->wal_st.first_row_tm == 0)
+			r->wal_st.first_row_tm = wal_st->first_row_tm;
+	}
+}
+
+/**
+ * Encode timestamp for ACK sending. We drop the value on purpose
+ * because it is one time action and if transactions are written
+ * in a batch we need to account the oldest timestamp to show real
+ * relay lag.
+ */
+static void
+wal_stat_ack(uint32_t replica_id, struct xrow_header *xrow)
+{
+	struct replica *r = replica_by_id(replica_id);
+	if (likely(r != NULL)) {
+		assert(replica_id == r->wal_st.replica_id);
+		xrow->tm = r->wal_st.first_row_tm;
+		r->wal_st.first_row_tm = 0;
+	}
+}
+
 /*
  * Fiber function to write vclock to replication master.
  * To track connection status, replica answers master
@@ -193,6 +224,7 @@ applier_writer_f(va_list ap)
 			applier->has_acks_to_send = false;
 			struct xrow_header xrow;
 			xrow_encode_vclock(&xrow, &replicaset.vclock);
+			wal_stat_ack(applier->instance_id, &xrow);
 			coio_write_xrow(&io, &xrow);
 			ERROR_INJECT(ERRINJ_APPLIER_SLOW_ACK, {
 				fiber_sleep(0.01);
@@ -490,7 +522,7 @@ static uint64_t
 applier_read_tx(struct applier *applier, struct stailq *rows, double timeout);
 
 static int
-apply_final_join_tx(struct stailq *rows);
+apply_final_join_tx(uint32_t replica_id, struct stailq *rows);
 
 /**
  * A helper struct to link xrow objects in a list.
@@ -535,7 +567,7 @@ applier_wait_register(struct applier *applier, uint64_t row_count)
 						  next)->row);
 			break;
 		}
-		if (apply_final_join_tx(&rows) != 0)
+		if (apply_final_join_tx(applier->instance_id, &rows) != 0)
 			diag_raise();
 	}
 
@@ -756,6 +788,11 @@ applier_txn_wal_write_cb(struct trigger *trigger, void *event)
 {
 	(void) trigger;
 	(void) event;
+
+	struct applier_wal_stat *wal_st =
+		(struct applier_wal_stat *)trigger->data;
+	wal_stat_update(wal_st);
+
 	/* Broadcast the WAL write across all appliers. */
 	trigger_run(&replicaset.applier.on_wal_write, NULL);
 	return 0;
@@ -766,6 +803,8 @@ struct synchro_entry {
 	struct synchro_request *req;
 	/** Fiber created the entry. To wakeup when WAL write is done. */
 	struct fiber *owner;
+	/** WAL bound statistics. */
+	struct applier_wal_stat *wal_st;
 	/**
 	 * The base journal entry. It has unsized array and then must be the
 	 * last entry in the structure. But can workaround it via a union
@@ -789,6 +828,8 @@ apply_synchro_row_cb(struct journal_entry *entry)
 	if (entry->res < 0) {
 		applier_rollback_by_wal_io();
 	} else {
+		if (synchro_entry->wal_st != NULL)
+			wal_stat_update(synchro_entry->wal_st);
 		txn_limbo_process(&txn_limbo, synchro_entry->req);
 		trigger_run(&replicaset.applier.on_wal_write, NULL);
 	}
@@ -797,7 +838,7 @@ apply_synchro_row_cb(struct journal_entry *entry)
 
 /** Process a synchro request. */
 static int
-apply_synchro_row(struct xrow_header *row)
+apply_synchro_row(uint32_t replica_id, struct xrow_header *row)
 {
 	assert(iproto_type_is_synchro_request(row->type));
 
@@ -805,6 +846,7 @@ apply_synchro_row(struct xrow_header *row)
 	if (xrow_decode_synchro(row, &req) != 0)
 		goto err;
 
+	struct applier_wal_stat wal_st;
 	struct synchro_entry entry;
 	/*
 	 * Rows array is cast from *[] to **, because otherwise g++ complains
@@ -817,6 +859,15 @@ apply_synchro_row(struct xrow_header *row)
 			     apply_synchro_row_cb, &entry);
 	entry.req = &req;
 	entry.owner = fiber();
+
+	if (replica_id != 0) {
+		wal_st.replica_id = replica_id;
+		wal_st.first_row_tm = row->tm;
+		entry.wal_st = &wal_st;
+	} else {
+		entry.wal_st = NULL;
+	}
+
 	/*
 	 * The WAL write is blocking. Otherwise it might happen that a CONFIRM
 	 * or ROLLBACK is sent to WAL, and it would empty the limbo, but before
@@ -862,8 +913,9 @@ applier_handle_raft(struct applier *applier, struct xrow_header *row)
 	return box_raft_process(&req, applier->instance_id);
 }
 
-static inline int
-apply_plain_tx(struct stailq *rows, bool skip_conflict, bool use_triggers)
+static int
+apply_plain_tx(uint32_t replica_id, struct stailq *rows,
+	       bool skip_conflict, bool use_triggers)
 {
 	/*
 	 * Explicitly begin the transaction so that we can
@@ -931,10 +983,21 @@ apply_plain_tx(struct stailq *rows, bool skip_conflict, bool use_triggers)
 			goto fail;
 		}
 
+		struct applier_wal_stat *wal_st;
+		wal_st = region_alloc_object(&txn->region, typeof(*wal_st), &size);
+		if (wal_st == NULL) {
+			diag_set(OutOfMemory, size, "region_alloc_object", "wal_st");
+			goto fail;
+		}
+
 		trigger_create(on_rollback, applier_txn_rollback_cb, NULL, NULL);
 		txn_on_rollback(txn, on_rollback);
 
-		trigger_create(on_wal_write, applier_txn_wal_write_cb, NULL, NULL);
+		item = stailq_first_entry(rows, struct applier_tx_row, next);
+		wal_st->replica_id = replica_id;
+		wal_st->first_row_tm = item->row.tm;
+
+		trigger_create(on_wal_write, applier_txn_wal_write_cb, wal_st, NULL);
 		txn_on_wal_write(txn, on_wal_write);
 	}
 
@@ -946,7 +1009,7 @@ fail:
 
 /** A simpler version of applier_apply_tx() for final join stage. */
 static int
-apply_final_join_tx(struct stailq *rows)
+apply_final_join_tx(uint32_t replica_id, struct stailq *rows)
 {
 	struct xrow_header *first_row =
 		&stailq_first_entry(rows, struct applier_tx_row, next)->row;
@@ -957,9 +1020,9 @@ apply_final_join_tx(struct stailq *rows)
 	vclock_follow_xrow(&replicaset.vclock, last_row);
 	if (unlikely(iproto_type_is_synchro_request(first_row->type))) {
 		assert(first_row == last_row);
-		rc = apply_synchro_row(first_row);
+		rc = apply_synchro_row(replica_id, first_row);
 	} else {
-		rc = apply_plain_tx(rows, false, false);
+		rc = apply_plain_tx(replica_id, rows, false, false);
 	}
 	fiber_gc();
 	return rc;
@@ -1088,11 +1151,14 @@ applier_apply_tx(struct applier *applier, struct stailq *rows)
 		 * each other.
 		 */
 		assert(first_row == last_row);
-		if ((rc = apply_synchro_row(first_row)) != 0)
+		rc = apply_synchro_row(applier->instance_id, first_row);
+		if (rc != 0)
 			goto finish;
-	} else if ((rc = apply_plain_tx(rows, replication_skip_conflict,
-					true)) != 0) {
-		goto finish;
+	} else {
+		rc = apply_plain_tx(applier->instance_id, rows,
+				    replication_skip_conflict, true);
+		if (rc != 0)
+			goto finish;
 	}
 	vclock_follow(&replicaset.applier.vclock, last_row->replica_id,
 		      last_row->lsn);

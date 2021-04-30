@@ -331,6 +331,10 @@ struct replica {
 	 * separate from applier.
 	 */
 	enum applier_state applier_sync_state;
+	/**
+	 * Applier's WAL related statistics.
+	 */
+	struct applier_wal_stat wal_st;
 	/* The latch is used to order replication requests. */
 	struct latch order_latch;
 };
