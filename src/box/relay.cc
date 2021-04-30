@@ -158,6 +158,12 @@ struct relay {
 	struct stailq pending_gc;
 	/** Time when last row was sent to peer. */
 	double last_row_time;
+	/**
+	 * A time difference between moment when we
+	 * wrote a row in the local WAL and received
+	 * an ACK that peer has it replicated.
+	 */
+	double lag;
 	/** Relay sync state. */
 	enum relay_state state;
 
@@ -215,6 +221,12 @@ double
 relay_last_row_time(const struct relay *relay)
 {
 	return relay->last_row_time;
+}
+
+double
+relay_lag(const struct relay *relay)
+{
+	return relay->lag;
 }
 
 static void
@@ -621,6 +633,12 @@ relay_reader_f(va_list ap)
 			/* vclock is followed while decoding, zeroing it. */
 			vclock_create(&relay->recv_vclock);
 			xrow_decode_vclock_xc(&xrow, &relay->recv_vclock);
+			if (xrow.tm != 0) {
+				double delta = ev_now(loop()) - xrow.tm;
+				relay->lag = delta;
+			} else {
+				relay->lag = 0;
+			}
 			fiber_cond_signal(&relay->reader_cond);
 		}
 	} catch (Exception *e) {
