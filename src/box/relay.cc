@@ -158,6 +158,12 @@ struct relay {
 	struct stailq pending_gc;
 	/** Time when last row was sent to peer. */
 	double last_row_time;
+	/**
+	 * A time difference between moment when we
+	 * wrote the row in a local WAL and peer wrote
+	 * it in own WAL.
+	 */
+	double peer_wal_lag;
 	/** Relay sync state. */
 	enum relay_state state;
 
@@ -215,6 +221,12 @@ double
 relay_last_row_time(const struct relay *relay)
 {
 	return relay->last_row_time;
+}
+
+double
+relay_peer_wal_lag(const struct relay *relay)
+{
+	return relay->peer_wal_lag;
 }
 
 static void
@@ -614,15 +626,41 @@ relay_reader_f(va_list ap)
 	coio_create(&io, relay->io.fd);
 	ibuf_create(&ibuf, &cord()->slabc, 1024);
 	try {
-		while (!fiber_is_cancelled()) {
-			struct xrow_header xrow;
+		struct xrow_header xrow;
+		double prev_tm;
+
+		/*
+		 * Make a first read as a separate action because
+		 * we need previous timestamp from the xrow to
+		 * calculate delta from (to eliminate branching
+		 * in next reads).
+		 */
+		if (!fiber_is_cancelled()) {
 			coio_read_xrow_timeout_xc(&io, &ibuf, &xrow,
-					replication_disconnect_timeout());
+				replication_disconnect_timeout());
+			prev_tm = xrow.tm;
+		}
+
+		do {
 			/* vclock is followed while decoding, zeroing it. */
 			vclock_create(&relay->recv_vclock);
 			xrow_decode_vclock_xc(&xrow, &relay->recv_vclock);
+			/*
+			 * Old instances do not report the timestamp.
+			 * Same time in case of idle cycles the xrow.tm
+			 * is the same so update lag only when new data
+			 * been acked.
+			 */
+			if (prev_tm != xrow.tm) {
+				double delta = ev_now(loop()) - xrow.tm;
+				relay->peer_wal_lag = delta;
+				prev_tm = xrow.tm;
+			}
 			fiber_cond_signal(&relay->reader_cond);
-		}
+
+			coio_read_xrow_timeout_xc(&io, &ibuf, &xrow,
+					replication_disconnect_timeout());
+		} while (!fiber_is_cancelled());
 	} catch (Exception *e) {
 		relay_set_error(relay, e);
 		fiber_cancel(relay_f);
