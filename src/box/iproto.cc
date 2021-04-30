@@ -141,10 +141,15 @@ struct iproto_thread {
 	 * List of stopped connections
 	 */
 	RLIST_HEAD(stopped_connections);
-	/*
-	 * List of all connections
+	/**
+	 * List of connections that must be shutdowned
 	 */
-	struct rlist all_connections;
+	struct rlist to_shutdown_connections;
+	/**
+	 * List of connections that can't be closed
+	 * normally and must be closed after shutdown.
+	 */
+	struct rlist to_close_connections;
 	/*
 	 * Iproto thread stat
 	 */
@@ -515,9 +520,8 @@ struct iproto_connection
 	 */
 	enum iproto_connection_state state;
 	struct rlist in_stop_list;
-	struct rlist in_all_list;
-	/* Mark that connection is using in shutdown process */
-	bool process_shutdown;
+	struct rlist to_shutdown_list;
+	struct rlist to_close_list;
 	/**
 	 * Kharon is used to implement box.session.push().
 	 * When a new push is ready, tx uses kharon to notify
@@ -705,8 +709,7 @@ static inline void
 iproto_connection_close(struct iproto_connection *con)
 {
 
-	if (con->process_shutdown)
-		return;
+	rlist_del(&con->to_shutdown_list);
 	if (evio_has_fd(&con->input)) {
 		/* Clears all pending events. */
 		ev_io_stop(con->loop, &con->input);
@@ -732,7 +735,6 @@ iproto_connection_close(struct iproto_connection *con)
 		assert(con->state == IPROTO_CONNECTION_CLOSED);
 	}
 	rlist_del(&con->in_stop_list);
-	rlist_del(&con->in_all_list);
 }
 
 static inline struct ibuf *
@@ -1167,8 +1169,8 @@ iproto_connection_new(struct iproto_thread *iproto_thread, int fd)
 	con->long_poll_count = 0;
 	con->session = NULL;
 	rlist_create(&con->in_stop_list);
-	rlist_create(&con->in_all_list);
-	con->process_shutdown = false;
+	rlist_create(&con->to_shutdown_list);
+	rlist_create(&con->to_close_list);
 	/* It may be very awkward to allocate at close. */
 	cmsg_init(&con->destroy_msg, con->iproto_thread->destroy_route);
 	cmsg_init(&con->disconnect_msg, con->iproto_thread->disconnect_route);
@@ -2117,7 +2119,8 @@ iproto_on_accept(struct evio_service *service, int fd,
 		mempool_free(&con->iproto_thread->iproto_connection_pool, con);
 		return -1;
 	}
-	rlist_add_tail(&con->iproto_thread->all_connections, &con->in_all_list);
+	rlist_add_tail(&con->iproto_thread->to_shutdown_connections,
+		       &con->to_shutdown_list);
 	cmsg_init(&msg->base, iproto_thread->connect_route);
 	msg->p_ibuf = con->p_ibuf;
 	msg->wpos = con->wpos;
@@ -2367,22 +2370,17 @@ tx_send_shutdown(struct cmsg *m)
 }
 
 static void
-net_connection_end_shutdown(struct cmsg *m)
-{
-	struct iproto_connection *con =
-		container_of(m, struct iproto_connection, shutdown_msg);
-	con->process_shutdown = false;
-}
-
-static void
 iproto_process_shutdown(struct iproto_thread* iproto_thread)
 {
-	struct iproto_connection *con;
-	rlist_foreach_entry(con, &iproto_thread->all_connections, in_all_list) {
-		con->process_shutdown = true;
+	while (! rlist_empty(&iproto_thread->to_shutdown_connections)) {
+		struct iproto_connection *con =
+			rlist_first_entry(&iproto_thread->to_shutdown_connections,
+					  struct iproto_connection, to_shutdown_list);
+		rlist_del(&con->to_shutdown_list);
+		rlist_add_tail_entry(&con->iproto_thread->to_close_connections,
+				     con, to_close_list);
 		static const struct cmsg_hop send_shutdown_route[] = {
-			{ tx_send_shutdown, &iproto_thread->net_pipe },
-			{ net_connection_end_shutdown, NULL }
+			{ tx_send_shutdown,NULL }
 		};
 		cmsg_init(&con->shutdown_msg, send_shutdown_route);
 		cpipe_push(&iproto_thread->tx_pipe, &con->shutdown_msg);
@@ -2439,9 +2437,12 @@ iproto_init(int threads_count)
 			goto fail;
 		}
 		/* Create a pipe to "net" thread. */
-		iproto_thread->all_connections =
+		iproto_thread->to_shutdown_connections =
 			RLIST_HEAD_INITIALIZER(iproto_thread->
-					       all_connections);
+					       to_shutdown_connections);
+		iproto_thread->to_close_connections =
+			RLIST_HEAD_INITIALIZER(iproto_thread->
+					       to_close_connections);
 		iproto_thread->stopped_connections =
 			RLIST_HEAD_INITIALIZER(iproto_thread->
 					       stopped_connections);
