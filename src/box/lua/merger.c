@@ -53,7 +53,7 @@
 #include "box/lua/key_def.h" /* luaT_check_key_def() */
 #include "box/lua/tuple.h"   /* luaT_tuple_new() */
 
-#include "small/ibuf.h"      /* struct ibuf */
+#include <ibuf.h>      /* struct ibuf */
 #include "msgpuck.h"         /* mp_*() */
 
 #include "box/merger.h"      /* merge_source_*, merger_*() */

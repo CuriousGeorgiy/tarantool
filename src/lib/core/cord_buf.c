@@ -7,7 +7,7 @@
 #include "fiber.h"
 #include "trigger.h"
 
-#include "small/ibuf.h"
+#include <ibuf.h>
 
 enum {
 	/* No any reason why that value. Historical constant. */

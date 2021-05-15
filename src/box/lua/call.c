@@ -43,7 +43,7 @@
 
 #include "box/port.h"
 #include "box/lua/tuple.h"
-#include "small/obuf.h"
+#include <obuf.h>
 #include "trivia/util.h"
 #include "mpstream/mpstream.h"
 #include "box/session.h"

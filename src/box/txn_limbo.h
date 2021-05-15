@@ -29,7 +29,7 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "small/rlist.h"
+#include <rlist.h>
 #include "vclock/vclock.h"
 
 #include <stdint.h>

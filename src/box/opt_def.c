@@ -32,7 +32,7 @@
 #include "opt_def.h"
 #include "msgpuck.h"
 #include "bit/bit.h"
-#include "small/region.h"
+#include <region.h>
 #include "error.h"
 #include "diag.h"
 #include "tt_static.h"

@@ -31,7 +31,7 @@
  * SUCH DAMAGE.
  */
 #include <assert.h>
-#include "small/rlist.h"
+#include <rlist.h>
 #include "fiber.h"
 
 #if defined(__cplusplus)

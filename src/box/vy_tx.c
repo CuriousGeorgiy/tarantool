@@ -36,8 +36,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <small/mempool.h>
-#include <small/rlist.h>
+#include <mempool.h>
+#include <rlist.h>
 
 #include "diag.h"
 #include "errcode.h"

@@ -30,7 +30,7 @@
  */
 #include "bind.h"
 #include "errcode.h"
-#include "small/region.h"
+#include <region.h>
 #include "sql/sqlInt.h"
 #include "sql/sqlLimit.h"
 #include "sql/vdbe.h"

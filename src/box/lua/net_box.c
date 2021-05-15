@@ -31,7 +31,7 @@
 #include "net_box.h"
 #include <sys/socket.h>
 
-#include <small/ibuf.h>
+#include <ibuf.h>
 #include <msgpuck.h> /* mp_store_u32() */
 #include "scramble.h"
 
@@ -42,7 +42,7 @@
 #include "box/execute.h"
 
 #include "lua/msgpack.h"
-#include "third_party/base64.h"
+#include <base64.h>
 
 #include "coio.h"
 #include "box/errcode.h"

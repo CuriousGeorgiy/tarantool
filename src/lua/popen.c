@@ -35,7 +35,7 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-#include <small/region.h>
+#include <region.h>
 
 #include "diag.h"
 #include "core/popen.h"

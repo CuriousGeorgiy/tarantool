@@ -38,8 +38,8 @@
 #include <lualib.h>
 #include <lj_obj.h> /* internals: lua in box.runtime.info() */
 
-#include "small/small.h"
-#include "small/quota.h"
+#include <small.h>
+#include <quota.h>
 #include "memory.h"
 #include "box/engine.h"
 #include "box/memtx_engine.h"

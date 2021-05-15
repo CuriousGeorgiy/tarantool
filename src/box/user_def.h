@@ -33,8 +33,8 @@
 #include "schema_def.h" /* for SCHEMA_OBJECT_TYPE */
 #include "scramble.h" /* for SCRAMBLE_SIZE */
 #define RB_COMPACT 1
-#include "small/rb.h"
-#include "small/rlist.h"
+#include <rb.h>
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

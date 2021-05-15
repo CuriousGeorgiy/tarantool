@@ -43,7 +43,7 @@
 #include "index_def.h"
 #include "xlog.h"
 
-#include "small/mempool.h"
+#include <mempool.h>
 
 #if defined(__cplusplus)
 extern "C" {

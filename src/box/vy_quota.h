@@ -34,7 +34,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <small/rlist.h>
+#include <rlist.h>
 #include <tarantool_ev.h>
 
 #include "trivia/util.h"

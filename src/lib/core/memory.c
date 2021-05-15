@@ -29,7 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "memory.h"
-#include "small/quota.h"
+#include <quota.h>
 
 struct slab_arena runtime;
 

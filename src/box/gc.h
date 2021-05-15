@@ -33,7 +33,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "fiber_cond.h"
 #include "vclock/vclock.h"

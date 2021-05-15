@@ -35,7 +35,7 @@
 #include <stddef.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <small/mempool.h>
+#include <mempool.h>
 
 #include "diag.h"
 #include "fiber.h"

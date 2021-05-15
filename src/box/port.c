@@ -31,9 +31,9 @@
 #include "port.h"
 #include "tuple.h"
 #include "tuple_convert.h"
-#include <small/obuf.h>
-#include <small/slab_cache.h>
-#include <small/mempool.h>
+#include <obuf.h>
+#include <slab_cache.h>
+#include <mempool.h>
 #include <fiber.h>
 #include "errinj.h"
 

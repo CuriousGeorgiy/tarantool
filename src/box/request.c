@@ -34,7 +34,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <msgpuck.h>
-#include <small/region.h>
+#include <region.h>
 
 #include "fiber.h"
 #include "space.h"

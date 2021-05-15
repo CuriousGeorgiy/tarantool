@@ -36,8 +36,8 @@
 #include "sql/sqlInt.h"
 #include "sql/sqlLimit.h"
 #include "errcode.h"
-#include "small/region.h"
-#include "small/obuf.h"
+#include <region.h>
+#include <obuf.h>
 #include "diag.h"
 #include "sql.h"
 #include "xrow.h"

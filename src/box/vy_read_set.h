@@ -37,7 +37,7 @@
 #include <stdint.h>
 
 #define RB_COMPACT 1
-#include <small/rb.h>
+#include <rb.h>
 
 #include "salad/stailq.h"
 #include "trivia/util.h"

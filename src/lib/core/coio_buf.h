@@ -31,7 +31,7 @@
  * SUCH DAMAGE.
  */
 #include "coio.h"
-#include <small/ibuf.h>
+#include <ibuf.h>
 
 /** Buffered cooperative IO */
 

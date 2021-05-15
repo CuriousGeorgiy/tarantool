@@ -30,9 +30,9 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "small/rlist.h"
+#include <rlist.h>
 #include "trivia/util.h"
-#include "third_party/tarantool_ev.h"
+#include <tarantool_ev.h>
 #include "xlog.h"
 #include "vclock/vclock.h"
 

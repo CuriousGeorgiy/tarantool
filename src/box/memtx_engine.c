@@ -31,9 +31,9 @@
 #include "memtx_engine.h"
 #include "memtx_space.h"
 
-#include <small/quota.h>
-#include <small/small.h>
-#include <small/mempool.h>
+#include <quota.h>
+#include <small.h>
+#include <mempool.h>
 
 #include "fiber.h"
 #include "errinj.h"

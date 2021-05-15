@@ -36,7 +36,7 @@
 
 #include "txn.h"
 #include "schema_def.h"
-#include "small/mempool.h"
+#include <mempool.h>
 
 static uint32_t
 memtx_tx_story_key_hash(const struct tuple *a)

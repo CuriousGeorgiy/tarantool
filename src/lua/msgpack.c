@@ -38,8 +38,8 @@
 #include <lauxlib.h> /* struct luaL_error */
 
 #include <msgpuck.h>
-#include <small/region.h>
-#include <small/ibuf.h>
+#include <region.h>
+#include <ibuf.h>
 
 #include "lua/decimal.h" /* lua_pushdecimal() */
 #include "lib/core/decimal.h" /* decimal_unpack() */

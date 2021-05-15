@@ -33,8 +33,8 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <small/mempool.h>
-#include <small/rlist.h>
+#include <mempool.h>
+#include <rlist.h>
 
 #include "diag.h"
 #include "tuple.h"

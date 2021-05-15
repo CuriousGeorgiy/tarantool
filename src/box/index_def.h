@@ -33,7 +33,7 @@
 
 #include "key_def.h"
 #include "opt_def.h"
-#include "small/rlist.h"
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

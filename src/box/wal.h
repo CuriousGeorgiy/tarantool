@@ -32,7 +32,7 @@
  */
 #include <stdint.h>
 #include <sys/types.h>
-#include "small/rlist.h"
+#include <rlist.h>
 #include "cbus.h"
 #include "journal.h"
 #include "vclock/vclock.h"

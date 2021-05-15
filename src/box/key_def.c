@@ -37,7 +37,7 @@
 #include "column_mask.h"
 #include "schema_def.h"
 #include "coll_id_cache.h"
-#include "small/region.h"
+#include <region.h>
 #include "coll/coll.h"
 #include "fiber.h"
 

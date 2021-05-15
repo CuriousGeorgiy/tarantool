@@ -34,7 +34,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "salad/stailq.h"
 

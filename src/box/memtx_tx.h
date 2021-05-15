@@ -30,11 +30,9 @@
  * SUCH DAMAGE.
  */
 
-#include "small/rlist.h"
+#include <rlist.h>
 #include "index.h"
 #include "tuple.h"
-
-#include "small/rlist.h"
 
 #if defined(__cplusplus)
 extern "C" {

@@ -39,8 +39,8 @@
 #define ZSTD_STATIC_LINKING_ONLY
 #include "zstd.h"
 
-#include "small/ibuf.h"
-#include "small/obuf.h"
+#include <ibuf.h>
+#include <obuf.h>
 
 struct iovec;
 struct xrow_header;

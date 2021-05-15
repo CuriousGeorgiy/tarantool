@@ -35,15 +35,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "tt_pthread.h"
-#include "third_party/tarantool_ev.h"
+#include <tarantool_ev.h>
 #include "diag.h"
 #include "trivia/util.h"
-#include "small/mempool.h"
-#include "small/region.h"
-#include "small/rlist.h"
+#include <mempool.h>
+#include <region.h>
+#include <rlist.h>
 #include "salad/stailq.h"
 
-#include <third_party/coro/coro.h>
+#include <coro/coro.h>
 
 /*
  * Fiber top doesn't work on ARM processors at the moment,

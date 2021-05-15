@@ -30,7 +30,7 @@
  */
 #include "xrow_update_field.h"
 #include "fiber.h"
-#include "small/region.h"
+#include <region.h>
 #include "tuple_format.h"
 
 /**

@@ -39,8 +39,8 @@
 #include "tuple.h"
 #include "txn.h"
 #include "memtx_tx.h"
-#include <third_party/qsort_arg.h>
-#include <small/mempool.h>
+#include <qsort_arg.h>
+#include <mempool.h>
 
 /**
  * Struct that is used as a key in BPS tree definition.

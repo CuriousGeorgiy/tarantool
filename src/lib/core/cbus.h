@@ -33,7 +33,7 @@
 #include "fiber.h"
 #include "fiber_cond.h"
 #include "rmean.h"
-#include "small/rlist.h"
+#include <rlist.h>
 #include "salad/stailq.h"
 
 #if defined(__cplusplus)

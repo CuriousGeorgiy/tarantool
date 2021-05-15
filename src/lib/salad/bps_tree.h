@@ -36,7 +36,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <stdio.h> /* printf */
-#include "small/matras.h"
+#include <matras.h>
 
 /* {{{ BPS-tree description */
 /**

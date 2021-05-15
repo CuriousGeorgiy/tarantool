@@ -35,7 +35,7 @@
 #include "msgpuck.h"
 #include "mp_extension_types.h"
 #include "tt_static.h"
-#include "small/ibuf.h"
+#include <ibuf.h>
 #include "mpstream/mpstream.h"
 
 #include "box/error.h"

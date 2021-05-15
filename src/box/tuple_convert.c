@@ -31,9 +31,9 @@
 #include "tuple.h"
 #include <msgpuck/msgpuck.h>
 #include <yaml.h>
-#include "third_party/base64.h"
-#include <small/region.h>
-#include <small/obuf.h>
+#include <base64.h>
+#include <region.h>
+#include <obuf.h>
 #include "fiber.h"
 #include <trivia/util.h>
 

@@ -40,7 +40,7 @@
 #include "schema.h" /* space_by_id(), space_cache_find() */
 #include "errinj.h"
 
-#include <small/mempool.h>
+#include <mempool.h>
 
 static inline bool
 memtx_hash_equal(struct tuple *tuple_a, struct tuple *tuple_b,

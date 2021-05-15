@@ -40,7 +40,7 @@
 #include "xrow.h"
 #include "iproto_constants.h"
 #include "rmean.h"
-#include "small/obuf.h"
+#include <obuf.h>
 #include "tt_static.h"
 
 static const struct port_vtab port_msgpack_vtab;

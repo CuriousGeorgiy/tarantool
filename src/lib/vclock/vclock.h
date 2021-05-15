@@ -37,7 +37,7 @@
 #include <assert.h>
 
 #define RB_COMPACT 1
-#include <small/rb.h>
+#include <rb.h>
 
 #include "bit/bit.h"
 

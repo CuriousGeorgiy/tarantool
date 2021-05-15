@@ -35,7 +35,7 @@
 #include <sys/socket.h>
 #include <tarantool_ev.h>
 
-#include <small/ibuf.h>
+#include <ibuf.h>
 
 #include "fiber_cond.h"
 #include "trigger.h"

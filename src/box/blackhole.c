@@ -30,7 +30,7 @@
  */
 #include "blackhole.h"
 
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "diag.h"
 #include "error.h"

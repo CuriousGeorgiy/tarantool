@@ -30,9 +30,9 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <small/ibuf.h>
-#include <small/region.h>
-#include <small/mempool.h>
+#include <ibuf.h>
+#include <region.h>
+#include <mempool.h>
 #include <tarantool_ev.h>
 
 #include "diag.h"

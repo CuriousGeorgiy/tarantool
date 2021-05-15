@@ -46,8 +46,8 @@
 #ifdef ENABLE_BACKTRACE
 #include <libunwind.h>
 
-#include "small/region.h"
-#include "small/static.h"
+#include <region.h>
+#include <static.h>
 /*
  * We use a static buffer interface because it is too late to do any
  * allocation when we are printing backtrace and fiber stack is

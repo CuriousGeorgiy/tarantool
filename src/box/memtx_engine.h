@@ -33,9 +33,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <small/quota.h>
-#include <small/small.h>
-#include <small/mempool.h>
+#include <quota.h>
+#include <small.h>
+#include <mempool.h>
 
 #include "engine.h"
 #include "xlog.h"

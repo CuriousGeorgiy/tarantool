@@ -33,9 +33,9 @@
 #include <stdlib.h>
 
 #include <trivia/util.h>
-#include <small/lsregion.h>
-#include <small/slab_arena.h>
-#include <small/quota.h>
+#include <lsregion.h>
+#include <slab_arena.h>
+#include <quota.h>
 
 #include "diag.h"
 #include "tuple.h"

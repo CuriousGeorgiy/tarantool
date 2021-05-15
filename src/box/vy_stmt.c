@@ -37,8 +37,8 @@
 #include <pmatomic.h> /* for refs */
 
 #include "diag.h"
-#include <small/region.h>
-#include <small/lsregion.h>
+#include <region.h>
+#include <lsregion.h>
 
 #include "error.h"
 #include "tuple_bloom.h"

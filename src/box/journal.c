@@ -29,7 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "journal.h"
-#include <small/region.h>
+#include <region.h>
 #include <diag.h>
 
 struct journal *current_journal = NULL;

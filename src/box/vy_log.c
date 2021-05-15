@@ -41,9 +41,9 @@
 #include <unistd.h>
 
 #include <msgpuck/msgpuck.h>
-#include <small/mempool.h>
-#include <small/region.h>
-#include <small/rlist.h>
+#include <mempool.h>
+#include <region.h>
+#include <rlist.h>
 
 #include "assoc.h"
 #include "coio_task.h"

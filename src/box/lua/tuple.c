@@ -34,8 +34,8 @@
 #include "lua/utils.h" /* luaT_error() */
 #include "lua/msgpack.h" /* luamp_encode_XXX() */
 #include "diag.h" /* diag_set() */
-#include <small/ibuf.h>
-#include <small/region.h>
+#include <ibuf.h>
+#include <region.h>
 #include "cord_buf.h"
 #include <fiber.h>
 

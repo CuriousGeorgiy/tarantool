@@ -34,10 +34,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include <small/rlist.h>
-#include <small/lsregion.h>
-#include <small/slab_arena.h>
-#include <small/quota.h>
+#include <rlist.h>
+#include <lsregion.h>
+#include <slab_arena.h>
+#include <quota.h>
 
 #include "fiber_cond.h"
 #include "iterator_type.h"

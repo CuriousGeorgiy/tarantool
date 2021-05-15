@@ -34,7 +34,7 @@
 #include "ck_constraint.h"
 #include "errcode.h"
 #include "schema.h"
-#include "small/region.h"
+#include <region.h>
 #include "sql.h"
 #include "sql/sqlInt.h"
 #include "sql/vdbeInt.h"

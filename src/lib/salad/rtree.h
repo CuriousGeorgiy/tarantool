@@ -32,10 +32,10 @@
  */
 #include <stddef.h>
 #include <stdbool.h>
-#include "small/matras.h"
+#include <matras.h>
 
 #define RB_COMPACT 1
-#include "small/rb.h"
+#include <rb.h>
 
 /**
  * In-memory Guttman's R-tree

@@ -34,8 +34,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <small/region.h>
-#include <small/rlist.h>
+#include <region.h>
+#include <rlist.h>
 
 #include "fiber.h"
 

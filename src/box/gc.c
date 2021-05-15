@@ -42,8 +42,8 @@
 #include <time.h>
 
 #define RB_COMPACT 1
-#include <small/rb.h>
-#include <small/rlist.h>
+#include <rb.h>
+#include <rlist.h>
 #include <tarantool_ev.h>
 
 #include "diag.h"

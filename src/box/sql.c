@@ -48,7 +48,7 @@
 #include "index_def.h"
 #include "tuple.h"
 #include "fiber.h"
-#include "small/region.h"
+#include <region.h>
 #include "session.h"
 #include "xrow.h"
 #include "iproto_constants.h"

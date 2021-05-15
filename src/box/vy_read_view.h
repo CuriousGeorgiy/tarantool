@@ -34,7 +34,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <small/rlist.h>
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

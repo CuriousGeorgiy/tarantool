@@ -35,7 +35,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <small/mempool.h>
+#include <mempool.h>
 #include <msgpuck/msgpuck.h>
 
 #include "txn.h"
@@ -48,7 +48,7 @@
 #include "session.h"
 #include "trivia/util.h"
 
-#include "third_party/PMurHash.h"
+#include <PMurHash.h>
 
 enum {
 	SEQUENCE_HASH_SEED = 13U,

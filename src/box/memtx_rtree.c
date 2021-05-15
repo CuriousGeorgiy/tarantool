@@ -31,8 +31,8 @@
 #include "memtx_rtree.h"
 
 #include <salad/rtree.h>
-#include <small/small.h>
-#include <small/mempool.h>
+#include <small.h>
+#include <mempool.h>
 
 #include "index.h"
 #include "errinj.h"

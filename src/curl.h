@@ -32,7 +32,7 @@
  */
 #include <curl/curl.h>
 
-#include <small/mempool.h>
+#include <mempool.h>
 
 #include "tarantool_ev.h"
 

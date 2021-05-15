@@ -33,7 +33,7 @@
 #include "trivia/config.h"
 #include "fiber.h"
 #include "cbus.h"
-#include "small/rlist.h"
+#include <rlist.h>
 #include "salad/stailq.h"
 #include "tarantool_ev.h"
 

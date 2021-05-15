@@ -37,7 +37,7 @@
 #include <errno.h>
 #include <sys/types.h> /* pid_t */
 #include <tarantool_ev.h>
-#include "small/rlist.h"
+#include <rlist.h>
 #include "fiber_cond.h"
 #include "ratelimit.h"
 

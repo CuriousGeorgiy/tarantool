@@ -31,7 +31,7 @@
  * SUCH DAMAGE.
  */
 
-#include <small/rlist.h>
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

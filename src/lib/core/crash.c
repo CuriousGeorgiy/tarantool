@@ -12,7 +12,7 @@
 #include <sys/types.h>
 #include <sys/utsname.h>
 
-#include "small/static.h"
+#include <static.h>
 #include "trivia/util.h"
 #include "uuid/tt_uuid.h"
 

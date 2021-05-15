@@ -34,9 +34,9 @@
 #include <stdio.h>
 
 #include <msgpuck.h>
-#include <small/ibuf.h>
-#include <small/obuf.h>
-#include "third_party/base64.h"
+#include <ibuf.h>
+#include <obuf.h>
+#include <base64.h>
 
 #include "version.h"
 #include "fiber.h"

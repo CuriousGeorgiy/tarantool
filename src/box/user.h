@@ -32,7 +32,7 @@
  */
 #include <stdint.h>
 #include "user_def.h"
-#include "small/region.h"
+#include <region.h>
 
 #if defined(__cplusplus)
 extern "C" {

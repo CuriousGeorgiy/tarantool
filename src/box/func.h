@@ -34,7 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "small/rlist.h"
+#include <rlist.h>
 #include "func_def.h"
 #include "user_def.h"
 #include "module_cache.h"

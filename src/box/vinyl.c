@@ -51,9 +51,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <small/lsregion.h>
-#include <small/region.h>
-#include <small/mempool.h>
+#include <lsregion.h>
+#include <region.h>
+#include <mempool.h>
 
 #include "coio_task.h"
 #include "cbus.h"

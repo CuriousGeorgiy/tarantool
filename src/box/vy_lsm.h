@@ -34,8 +34,8 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <small/mempool.h>
-#include <small/rlist.h>
+#include <mempool.h>
+#include <rlist.h>
 
 #include "index.h"
 #include "index_def.h"

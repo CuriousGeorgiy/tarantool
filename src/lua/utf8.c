@@ -35,7 +35,7 @@
 #include "lua/utf8.h"
 #include "cord_buf.h"
 #include "diag.h"
-#include "small/ibuf.h"
+#include <ibuf.h>
 #include "tt_static.h"
 
 /** Collations for cmp/casecmp functions. */

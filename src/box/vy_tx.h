@@ -34,10 +34,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <small/mempool.h>
+#include <mempool.h>
 #define RB_COMPACT 1
-#include <small/rb.h>
-#include <small/rlist.h>
+#include <rb.h>
+#include <rlist.h>
 
 #include "iterator_type.h"
 #include "salad/stailq.h"

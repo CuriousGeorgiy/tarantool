@@ -33,7 +33,7 @@
 
 #include "fiber.h"
 
-#include <small/region.h>
+#include <region.h>
 
 static void
 trigger_fiber_run_timeout(ev_loop *loop, ev_timer *watcher, int revents)

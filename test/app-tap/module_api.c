@@ -2,7 +2,7 @@
 #include <string.h>
 #include <module.h>
 
-#include <small/ibuf.h>
+#include <ibuf.h>
 #include <msgpuck/msgpuck.h>
 
 #include <errno.h>

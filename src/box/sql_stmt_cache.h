@@ -33,7 +33,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "small/rlist.h"
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

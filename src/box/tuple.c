@@ -33,8 +33,8 @@
 #include "trivia/util.h"
 #include "memory.h"
 #include "fiber.h"
-#include "small/quota.h"
-#include "small/small.h"
+#include <quota.h>
+#include <small.h>
 #include "xrow_update.h"
 #include "coll_id_cache.h"
 

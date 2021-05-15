@@ -32,7 +32,7 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "small/matras.h"
+#include <matras.h>
 
 /**
  * Additional user defined name that appended to prefix 'light'

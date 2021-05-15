@@ -31,7 +31,7 @@
 
 #include "fiber_cond.h"
 
-#include <small/mempool.h>
+#include <mempool.h>
 #include <tarantool_ev.h>
 
 #include "fiber.h"

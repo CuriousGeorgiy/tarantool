@@ -34,7 +34,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "diag.h"
 #include "fiber_cond.h"

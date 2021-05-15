@@ -32,7 +32,7 @@
  */
 #include "user_def.h"
 #include "space_def.h"
-#include "small/rlist.h"
+#include <rlist.h>
 #include "bit/bit.h"
 #include "engine.h"
 #include "index.h"

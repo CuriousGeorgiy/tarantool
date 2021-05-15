@@ -34,7 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <small/mempool.h>
+#include <mempool.h>
 
 #include "diag.h"
 #include "error.h"

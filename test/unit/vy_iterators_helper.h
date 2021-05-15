@@ -34,8 +34,8 @@
 #include <sys/uio.h>
 #include "unit.h"
 #include "vy_stmt.h"
-#include "small/rlist.h"
-#include "small/lsregion.h"
+#include <rlist.h>
+#include <lsregion.h>
 #include "vy_mem.h"
 #include "vy_cache.h"
 #include "vy_read_view.h"

@@ -34,13 +34,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "iterator_type.h"
 #include "vy_stmt.h" /* for comparators */
 #include "vy_read_view.h"
 #include "vy_stat.h"
-#include "small/mempool.h"
+#include <mempool.h>
 
 #if defined(__cplusplus)
 extern "C" {

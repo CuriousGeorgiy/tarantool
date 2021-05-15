@@ -5,7 +5,7 @@
 #include "unit.h"             /* plan, header, footer, is, ok */
 #include "memory.h"           /* memory_init() */
 #include "fiber.h"            /* fiber_init() */
-#include "small/ibuf.h"       /* struct ibuf */
+#include <ibuf.h>             /* struct ibuf */
 #include "box/box.h"          /* box_init() */
 #include "box/tuple.h"        /* box_tuple_format_default() */
 #include "lua/msgpack.h"      /* luaopen_msgpack() */

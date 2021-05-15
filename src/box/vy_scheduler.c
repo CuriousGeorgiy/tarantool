@@ -36,7 +36,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <small/rlist.h>
+#include <rlist.h>
 #include <tarantool_ev.h>
 
 #include "diag.h"

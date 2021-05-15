@@ -32,7 +32,7 @@
 #include "memtx_bitset.h"
 
 #include <string.h>
-#include <small/mempool.h>
+#include <mempool.h>
 
 #include "trivia/util.h"
 
@@ -56,7 +56,7 @@ struct memtx_bitset_index {
 };
 
 #ifndef OLD_GOOD_BITSET
-#include "small/matras.h"
+#include <matras.h>
 struct mh_bitset_index_t;
 
 struct bitset_hash_entry {

@@ -30,7 +30,7 @@
  */
 #include "recovery.h"
 
-#include "small/rlist.h"
+#include <rlist.h>
 #include "scoped_guard.h"
 #include "trigger.h"
 #include "fiber.h"

@@ -31,9 +31,9 @@
 #include "xrow.h"
 
 #include <msgpuck.h>
-#include <small/region.h>
-#include <small/obuf.h>
-#include "third_party/base64.h"
+#include <region.h>
+#include <obuf.h>
+#include <base64.h>
 
 #include "fiber.h"
 #include "version.h"

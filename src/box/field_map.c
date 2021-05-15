@@ -30,7 +30,7 @@
  */
 #include "diag.h"
 #include "field_map.h"
-#include "small/region.h"
+#include <region.h>
 
 int
 field_map_builder_create(struct field_map_builder *builder,

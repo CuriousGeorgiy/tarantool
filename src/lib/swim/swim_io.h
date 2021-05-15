@@ -31,7 +31,7 @@
  * SUCH DAMAGE.
  */
 #include "tt_static.h"
-#include "small/rlist.h"
+#include <rlist.h>
 #include "salad/stailq.h"
 #include "crypto/crypto.h"
 #include "swim_transport.h"

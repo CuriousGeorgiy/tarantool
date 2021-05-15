@@ -33,8 +33,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "trivia/util.h"
-#include "small/slab_arena.h"
-#include "small/rlist.h"
+#include <slab_arena.h>
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

@@ -32,7 +32,7 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <small/rlist.h>
+#include <rlist.h>
 
 RLIST_HEAD(engines);
 

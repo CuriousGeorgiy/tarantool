@@ -33,7 +33,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <tarantool_ev.h>
-#include "small/rlist.h"
+#include <rlist.h>
 
 #if defined(__cplusplus)
 extern "C" {

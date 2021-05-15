@@ -34,8 +34,8 @@
 #include "trigger.h"
 #include <stdint.h>
 #define RB_COMPACT 1
-#include <small/rb.h> /* replicaset_t */
-#include <small/rlist.h>
+#include <rb.h> /* replicaset_t */
+#include <rlist.h>
 #include "applier.h"
 #include "fiber_cond.h"
 #include "vclock/vclock.h"

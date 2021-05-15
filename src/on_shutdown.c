@@ -35,7 +35,7 @@
 #include "say.h"
 
 #include <stdlib.h>
-#include <small/rlist.h>
+#include <rlist.h>
 #include <errno.h>
 #include <trigger.h>
 

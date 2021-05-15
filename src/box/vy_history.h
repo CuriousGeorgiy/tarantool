@@ -33,7 +33,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
-#include <small/rlist.h>
+#include <rlist.h>
 
 #include "iproto_constants.h"
 #include "vy_stmt.h"

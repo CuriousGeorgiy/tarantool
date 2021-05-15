@@ -34,7 +34,7 @@
 #include "ibuf.h"
 #include "error.h"
 #include "diag.h"
-#include "small/ibuf.h"
+#include <ibuf.h>
 
 void *
 box_ibuf_reserve(box_ibuf_t *ibuf, size_t size)

@@ -31,7 +31,7 @@
 #include "vy_upsert.h"
 
 #include <sys/uio.h>
-#include <small/region.h>
+#include <region.h>
 #include <msgpuck/msgpuck.h>
 #include "vy_stmt.h"
 #include "xrow_update.h"
