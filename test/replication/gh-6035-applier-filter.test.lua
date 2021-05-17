@@ -1,53 +1,49 @@
 test_run = require('test_run').new()
 
-cfg_save = {                                                            \
-    replication_connect_quorum  = box.cfg.replication_connect_quorum,   \
-    replication_synchro_quorum  = box.cfg.replication_synchro_quorum,   \
-    replication_synchro_timeout = box.cfg.replication_synchro_timeout,  \
-    replication_sync_timeout    = box.cfg.replication_sync_timeout,     \
-    read_only                   = box.cfg.read_only,                    \
-    election_mode               = box.cfg.election_mode,                \
-}
+test_run:cmd('create server master with \
+              script="replication/gh-6035-master.lua"')
+test_run:cmd('start server master')
 
-box.cfg{                                                                \
-    replication_connect_quorum      = 3,                                \
-    replication_synchro_quorum      = 2,                                \
-    replication_synchro_timeout     = 1000,                             \
-    replication_sync_timeout        = 5,                                \
-    read_only                       = false,                            \
-}
-
+test_run:switch('master')
 box.schema.user.grant('guest', 'super')
 
-test_run:cmd('create server replica1 with rpl_master=default,\
+test_run:switch('default')
+test_run:cmd('create server replica1 with rpl_master=master,\
               script="replication/gh-6035-replica-1.lua"')
 test_run:cmd('start server replica1')
 
-test_run:cmd('create server replica2 with rpl_master=default,\
+test_run:cmd('create server replica2 with rpl_master=master,\
               script="replication/gh-6035-replica-2.lua"')
 test_run:cmd('start server replica2')
 
-test_run:cmd('create server replica3 with rpl_master=default,\
+test_run:cmd('create server replica3 with rpl_master=master,\
               script="replication/gh-6035-replica-3.lua"')
 test_run:cmd('start server replica3')
 
 --
--- Prepare RAFT states.
-test_run:switch('default')
-box.cfg{election_mode = 'candidate'}
+-- Wait the master to become a RAFT leader.
+test_run:switch('master')
+test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
 
-test_run:switch('replica1')
-box.cfg{election_mode = 'voter'}
+-- Create spaces needed.
+test_run:switch('master')
+_ = box.schema.create_space('async')
+_ = box.space.async:create_index('pk')
+_ = box.schema.create_space('sync', {is_sync = true})
+_ = box.space.sync:create_index('pk')
 
-test_run:switch('replica2')
-box.cfg{election_mode = 'voter'}
-
-test_run:switch('replica2')
-box.cfg{election_mode = 'voter'}
+--
+-- Now force make replica3 being a leader.
+test_run:switch('replica3')
+box.cfg{read_only = false, election_mode = 'manual'}
+box.ctl.promote()
+test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
 
 --
 -- Cleanup.
 test_run:switch('default')
+test_run:cmd('stop server master')
+test_run:cmd('delete server master')
 test_run:cmd('stop server replica1')
 test_run:cmd('delete server replica1')
 test_run:cmd('stop server replica2')
@@ -55,17 +51,8 @@ test_run:cmd('delete server replica2')
 test_run:cmd('stop server replica3')
 test_run:cmd('delete server replica3')
 
---
--- Restore settings.
-box.schema.user.revoke('guest', 'super')
-box.cfg.replication_connect_quorum = cfg_save.replication_connect_quorum
-box.cfg.replication_synchro_quorum = cfg_save.replication_synchro_quorum
-box.cfg.replication_synchro_timeout = cfg_save.replication_synchro_timeout
-box.cfg.read_only = cfg_save.read_only
-box.cfg.election_mode = cfg_save.election_mode
-
 ----
----- Instance 1.
+---- Instance master.
 ----
 ---- Step 1.
 --box.cfg{
@@ -115,7 +102,7 @@ box.cfg.election_mode = cfg_save.election_mode
 --
 --
 ----
----- Instance 2.
+---- Instance replica1.
 ----
 ---- Step 2.
 --box.cfg{
@@ -154,7 +141,7 @@ box.cfg.election_mode = cfg_save.election_mode
 --
 --
 ----
----- Instance 3.
+---- Instance replica2.
 ----
 ---- Step 3.
 --box.cfg{
@@ -184,7 +171,7 @@ box.cfg.election_mode = cfg_save.election_mode
 --
 --
 ----
----- Instance 4.
+---- Instance replica3.
 ----
 ---- Step 4.
 --box.cfg{

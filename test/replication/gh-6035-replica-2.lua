@@ -16,4 +16,5 @@ box.cfg{
     replication_synchro_timeout = 1000,
     replication_sync_timeout    = 5,
     read_only                   = true,
+    election_mode               = 'voter',
 }
