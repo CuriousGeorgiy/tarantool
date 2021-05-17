@@ -36,8 +36,8 @@ _ = box.space.sync:create_index('pk')
 -- Now force make replica3 being a leader.
 test_run:switch('replica3')
 box.cfg{read_only = false, election_mode = 'manual'}
-box.ctl.promote()
-test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
+--box.ctl.promote()
+--test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
 
 --
 -- Cleanup.

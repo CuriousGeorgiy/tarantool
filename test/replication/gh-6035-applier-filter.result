@@ -85,17 +85,13 @@ _ = box.space.sync:create_index('pk')
  | ...
 
 --
--- Now force make replica2 being a leader.
-test_run:switch('replica2')
+-- Now force make replica3 being a leader.
+test_run:switch('replica3')
  | ---
  | - true
  | ...
 box.cfg{read_only = false, election_mode = 'manual'}
  | ---
- | ...
-box.schema.user.grant('guest', 'super')
- | ---
- | - error: User 'guest' already has role 'super'
  | ...
 --box.ctl.promote()
 --test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
@@ -190,7 +186,7 @@ test_run:cmd('delete server replica3')
 --
 --
 ----
----- Instance 2.
+---- Instance replica1.
 ----
 ---- Step 2.
 --box.cfg{
@@ -229,7 +225,7 @@ test_run:cmd('delete server replica3')
 --
 --
 ----
----- Instance replica1.
+---- Instance replica2.
 ----
 ---- Step 3.
 --box.cfg{
@@ -259,7 +255,7 @@ test_run:cmd('delete server replica3')
 --
 --
 ----
----- Instance replica2.
+---- Instance replica3.
 ----
 ---- Step 4.
 --box.cfg{
