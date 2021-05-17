@@ -1,4 +1,7 @@
+-- test-run result file version 2
 test_run = require('test_run').new()
+ | ---
+ | ...
 
 cfg_save = {                                                            \
     replication_connect_quorum  = box.cfg.replication_connect_quorum,   \
@@ -8,6 +11,8 @@ cfg_save = {                                                            \
     read_only                   = box.cfg.read_only,                    \
     election_mode               = box.cfg.election_mode,                \
 }
+ | ---
+ | ...
 
 box.cfg{                                                                \
     replication_connect_quorum      = 3,                                \
@@ -16,53 +21,123 @@ box.cfg{                                                                \
     replication_sync_timeout        = 5,                                \
     read_only                       = false,                            \
 }
+ | ---
+ | ...
 
 box.schema.user.grant('guest', 'super')
+ | ---
+ | ...
 
 test_run:cmd('create server replica1 with rpl_master=default,\
               script="replication/gh-6035-replica-1.lua"')
+ | ---
+ | - true
+ | ...
 test_run:cmd('start server replica1')
+ | ---
+ | - true
+ | ...
 
 test_run:cmd('create server replica2 with rpl_master=default,\
               script="replication/gh-6035-replica-2.lua"')
+ | ---
+ | - true
+ | ...
 test_run:cmd('start server replica2')
+ | ---
+ | - true
+ | ...
 
 test_run:cmd('create server replica3 with rpl_master=default,\
               script="replication/gh-6035-replica-3.lua"')
+ | ---
+ | - true
+ | ...
 test_run:cmd('start server replica3')
+ | ---
+ | - true
+ | ...
 
---
--- Prepare RAFT states.
 test_run:switch('default')
+ | ---
+ | - true
+ | ...
 box.cfg{election_mode = 'candidate'}
+ | ---
+ | ...
 
 test_run:switch('replica1')
+ | ---
+ | - true
+ | ...
 box.cfg{election_mode = 'voter'}
-
+ | ---
+ | ...
 test_run:switch('replica2')
+ | ---
+ | - true
+ | ...
 box.cfg{election_mode = 'voter'}
-
+ | ---
+ | ...
 test_run:switch('replica2')
+ | ---
+ | - true
+ | ...
 box.cfg{election_mode = 'voter'}
+ | ---
+ | ...
 
---
--- Cleanup.
 test_run:switch('default')
+ | ---
+ | - true
+ | ...
 test_run:cmd('stop server replica1')
+ | ---
+ | - true
+ | ...
 test_run:cmd('delete server replica1')
+ | ---
+ | - true
+ | ...
 test_run:cmd('stop server replica2')
+ | ---
+ | - true
+ | ...
 test_run:cmd('delete server replica2')
+ | ---
+ | - true
+ | ...
 test_run:cmd('stop server replica3')
+ | ---
+ | - true
+ | ...
 test_run:cmd('delete server replica3')
+ | ---
+ | - true
+ | ...
 
 --
 -- Restore settings.
 box.schema.user.revoke('guest', 'super')
+ | ---
+ | - error: Can't modify data because this instance is in read-only mode.
+ | ...
 box.cfg.replication_connect_quorum = cfg_save.replication_connect_quorum
+ | ---
+ | ...
 box.cfg.replication_synchro_quorum = cfg_save.replication_synchro_quorum
+ | ---
+ | ...
 box.cfg.replication_synchro_timeout = cfg_save.replication_synchro_timeout
+ | ---
+ | ...
 box.cfg.read_only = cfg_save.read_only
+ | ---
+ | ...
 box.cfg.election_mode = cfg_save.election_mode
+ | ---
+ | ...
 
 ----
 ---- Instance 1.
