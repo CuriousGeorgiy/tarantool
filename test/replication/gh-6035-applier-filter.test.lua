@@ -1,32 +1,23 @@
 test_run = require('test_run').new()
+log = require('log')
+fiber = require('fiber')
 
-test_run:cmd('create server master with \
-              script="replication/gh-6035-master.lua"')
-test_run:cmd('start server master')
+SERVERS = {                 \
+    'gh6035master',         \
+    'gh6035replica1',       \
+    'gh6035replica2',       \
+    'gh6035replica3'        \
+}
 
-test_run:switch('master')
-box.schema.user.grant('guest', 'super')
-
-test_run:switch('default')
-test_run:cmd('create server replica1 with rpl_master=master,\
-              script="replication/gh-6035-replica-1.lua"')
-test_run:cmd('start server replica1')
-
-test_run:cmd('create server replica2 with rpl_master=master,\
-              script="replication/gh-6035-replica-2.lua"')
-test_run:cmd('start server replica2')
-
-test_run:cmd('create server replica3 with rpl_master=master,\
-              script="replication/gh-6035-replica-3.lua"')
-test_run:cmd('start server replica3')
+test_run:create_cluster(SERVERS, "replication")
+test_run:wait_fullmesh(SERVERS)
 
 --
--- Wait the master to become a RAFT leader.
-test_run:switch('master')
+-- Make sure master node is a RAFT leader.
+test_run:switch('gh6035master')
 test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
 
 -- Create spaces needed.
-test_run:switch('master')
 _ = box.schema.create_space('async')
 _ = box.space.async:create_index('pk')
 _ = box.schema.create_space('sync', {is_sync = true})
@@ -34,22 +25,82 @@ _ = box.space.sync:create_index('pk')
 
 --
 -- Now force make replica3 being a leader.
-test_run:switch('replica3')
+test_run:switch('gh6035replica3')
 box.cfg{read_only = false, election_mode = 'manual'}
---box.ctl.promote()
---test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
+box.ctl.promote()
+test_run:wait_cond(function() return box.info().election.state == 'leader' end, 10)
 
 --
--- Cleanup.
+-- Stop replica1 and replica2.
 test_run:switch('default')
-test_run:cmd('stop server master')
-test_run:cmd('delete server master')
-test_run:cmd('stop server replica1')
-test_run:cmd('delete server replica1')
-test_run:cmd('stop server replica2')
-test_run:cmd('delete server replica2')
-test_run:cmd('stop server replica3')
-test_run:cmd('delete server replica3')
+test_run:cmd('stop server gh6035replica1')
+test_run:cmd('stop server gh6035replica2')
+
+--
+-- Insert data into async space on replica3 (which is leader now).
+test_run:switch('gh6035replica3')
+box.space.async:replace{1}
+-- And wait its replication to complete on the master node
+test_run:switch('gh6035master')
+test_run:wait_cond(function() return box.space.async:select() ~= nil end, 10)
+
+--
+-- And stop this leader (only the master node remains up).
+test_run:switch('default')
+test_run:cmd('stop server gh6035replica3')
+test_run:cmd('delete server gh6035replica3')
+
+--
+-- On master node update quorum so we can write
+-- to the database again, we're sole node up and
+-- running.
+test_run:switch('gh6035master')
+box.cfg{replication_synchro_quorum = 1}
+box.ctl.wait_rw()
+
+old_lsn = box.info.lsn
+box.cfg{replication_synchro_quorum = 2}
+require('fiber').create(function() box.space.sync:replace{1} end)
+
+-- Wait the write to reach WAL.
+test_run:wait_cond(function() return box.info.lsn > old_lsn end, 10)
+
+test_run:switch('default')
+test_run:cmd('stop server gh6035master')
+
+--
+-- Now restart replica1 and replica2 without replica3.
+test_run:switch('default')
+test_run:cmd('start server gh6035replica1 with args="true", wait_load=False, wait=False')
+test_run:cmd('start server gh6035replica2 with args="true", wait_load=False, wait=False')
+test_run:wait_fullmesh({'gh6035replica1', 'gh6035replica2'})
+
+--
+-- Make replica1 being a leader.
+test_run:switch('gh6035replica1')
+box.cfg{election_mode = 'manual'}
+box.ctl.promote()
+
+--
+-- Connect master node back.
+test_run:switch('default')
+test_run:cmd('start server gh6035master with args="true"')
+test_run:wait_fullmesh({'gh6035master', 'gh6035replica1', 'gh6035replica2'})
+
+--
+-- Resign replica1 and make it a plain voter back.
+test_run:switch('gh6035replica1')
+box.cfg{election_mode = 'voter'}
+
+--
+-- Make master node back to candidate.
+test_run:switch('gh6035master')
+box.cfg{replication_synchro_quorum = 1}
+box.cfg{election_mode = 'candidate'}
+
+-- Cleanup
+test_run:switch('default')
+test_run:drop_cluster({'gh6035master', 'gh6035replica1', 'gh6035replica2'})
 
 ----
 ---- Instance master.

@@ -1,0 +1,1 @@
+/home/cyrill/projects/tarantool/tarantool.git/test/replication/gh-6035-replica-2.lua
