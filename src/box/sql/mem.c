@@ -39,6 +39,8 @@
 #include "box/port.h"
 #include "lua/utils.h"
 #include "lua/msgpack.h"
+#include "uuid/mp_uuid.h"
+#include "mp_decimal.h"
 
 /*
  * Make sure pMem->z points to a writable allocation of at least
@@ -2966,6 +2968,24 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 					 field.sval.len) != 0)
 				goto error;
 			break;
+		case MP_EXT: {
+			char buf[BUF_SIZE];
+			assert(field.ext_type == MP_UUID ||
+			       field.ext_type == MP_DECIMAL);
+			uint32_t size;
+			if (field.ext_type == MP_UUID) {
+				size = mp_sizeof_uuid();
+				assert(size < BUF_SIZE);
+				mp_encode_uuid(&buf[0], field.uuidval);
+			} else {
+				size = mp_sizeof_decimal(field.decval);
+				assert(size < BUF_SIZE);
+				mp_encode_decimal(&buf[0], field.decval);
+			}
+			if (mem_copy_bin(&val[i], buf, size) != 0)
+				goto error;
+			break;
+		}
 		case MP_NIL:
 			break;
 		default:
