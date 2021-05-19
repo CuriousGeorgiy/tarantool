@@ -97,7 +97,8 @@ test_run:switch('gh6035master')
  | ---
  | - true
  | ...
-test_run:wait_cond(function() return box.space.async:select() ~= nil end, 10)
+test_run:wait_cond(function() return box.space.async:select{}[1] ~= nil \
+                   and box.space.async:select{}[1][1] == 1 end, 10)
  | ---
  | - true
  | ...
@@ -142,15 +143,21 @@ require('fiber').create(function() box.space.sync:replace{1} end)
  | ---
  | - status: suspended
  |   name: lua
- |   id: 434
+ |   id: 371
  | ...
 
--- Wait the write to reach WAL.
+--
+-- Wait the write to reach WAL, since master node is only
+-- once node alive here at this moment, it won't gather quorum
+-- for this write and won't issue CONFIRM because only the
+-- master node is up and running at this moment.
 test_run:wait_cond(function() return box.info.lsn > old_lsn end, 10)
  | ---
  | - true
  | ...
 
+--
+-- Stop master, it has unconfirmed (but not rolled back) record.
 test_run:switch('default')
  | ---
  | - true
@@ -161,194 +168,10 @@ test_run:cmd('stop server gh6035master')
  | ...
 
 --
--- Now restart replica1 and replica2 without replica3.
+-- No active nodes at this point. Now restart replica1 and replica2
+-- without replica3 in configs and master node stopped.
 test_run:switch('default')
  | ---
  | - true
  | ...
-test_run:cmd('start server gh6035replica1 with args="true", wait_load=False, wait=False')
- | ---
- | - true
- | ...
-test_run:cmd('start server gh6035replica2 with args="true", wait_load=False, wait=False')
- | ---
- | - true
- | ...
---test_run:wait_fullmesh({'gh6035replica1', 'gh6035replica2'})
---
-----
----- Make replica1 being a leader.
---test_run:switch('gh6035replica1')
---box.cfg{election_mode = 'manual'}
---box.ctl.promote()
---
-----
----- Connect master node back.
---test_run:switch('default')
---test_run:cmd('start server gh6035master with args="true"')
---test_run:wait_fullmesh({'gh6035master', 'gh6035replica1', 'gh6035replica2'})
---
-----
----- Resign replica1 and make it a plain voter back.
---test_run:switch('gh6035replica1')
---box.cfg{election_mode = 'voter'}
---
-----
----- Make master node back to candidate.
---test_run:switch('gh6035master')
---box.cfg{replication_synchro_quorum = 1}
---box.cfg{election_mode = 'candidate'}
-
--- Cleanup
-test_run:switch('default')
- | ---
- | - true
- | ...
-test_run:drop_cluster({'gh6035master', 'gh6035replica1', 'gh6035replica2'})
- | ---
- | ...
-
-----
----- Instance master.
-----
----- Step 1.
---box.cfg{
---    listen = 3313,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315', 'localhost:3316'},
---    replication_connect_quorum = 3,
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    read_only = false,
---    election_mode = 'candidate',
---}
---
----- Step 5.
---box.schema.user.grant('guest', 'super')
---box.schema.create_space('async')
---_ = box.space.async:create_index('pk')
---box.schema.create_space('sync', {is_sync = true})
---_ = box.space.sync:create_index('pk')
---
----- Step 11.
---box.cfg{replication_synchro_quorum = 1}
---box.ctl.wait_rw()
---
----- Step 12.
---box.cfg{replication_synchro_quorum = 2}
---require('fiber').create(function() box.space.sync:replace{1} end)
----- Wait WAL write.
---os.exit(0)
---
----- Step 16.
----- Restart.
---box.cfg{
---    listen = 3313,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315'},
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    election_mode = 'manual',
---}
---
----- Step 18.
---box.cfg{replication_synchro_quorum = 1}
---box.cfg{election_mode = 'candidate'}
---
---
---
---
-----
----- Instance replica1.
-----
----- Step 2.
---box.cfg{
---    listen = 3314,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315', 'localhost:3316'},
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    read_only = true,
---    election_mode = 'voter',
---}
---
----- Step 7.
---os.exit(0)
---
----- Step 13.
---box.cfg{
---    listen = 3314,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315'},
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    election_mode = 'voter',
---}
---
----- Step 15.
---box.cfg{election_mode = 'manual'}
---box.ctl.promote()
---
----- Step 17.
----- Resign.
---box.cfg{election_mode = 'voter'}
---
---
---
---
---
-----
----- Instance replica2.
-----
----- Step 3.
---box.cfg{
---    listen = 3315,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315', 'localhost:3316'},
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    read_only = true,
---    election_mode = 'voter',
---}
---
----- Step 8.
---os.exit(0)
---
----- Step 14.
---box.cfg{
---    listen = 3315,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315'},
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    election_mode = 'voter',
---}
---
---
---
---
-----
----- Instance replica3.
-----
----- Step 4.
---box.cfg{
---    listen = 3316,
---    replication = {'localhost:3313', 'localhost:3314', 'localhost:3315', 'localhost:3316'},
---    replication_connect_quorum = 3,
---    replication_synchro_quorum = 2,
---    replication_synchro_timeout = 1000,
---    replication_sync_timeout = 5,
---    read_only = true,
---    election_mode = 'voter',
---}
---
----- Step 6.
---box.cfg{read_only = false, election_mode = 'manual'}
---box.ctl.promote()
---
----- Step 9.
---box.space.async:replace{1}
----- Wait replication to instance 1.
---
----- Step 10.
---os.exit(0)
+test_run:cmd('start server gh6035replica1 with args="true", wait_load=False')
