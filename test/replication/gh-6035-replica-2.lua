@@ -26,6 +26,7 @@ if noreplica3 then
 box.cfg({
     listen                      = unix_socket("gh6035replica2"),
     replication                 = repl_list,
+    replication_connect_quorum  = 1, -- the master is down and second replica is not up yet
     replication_synchro_quorum  = 2,
     replication_synchro_timeout = 1000,
     replication_sync_timeout    = 5,

@@ -79,9 +79,12 @@ test_run:cmd('stop server gh6035master')
 -- No active nodes at this point. Now restart replica1 and replica2
 -- without replica3 in configs and master node stopped.
 test_run:switch('default')
-test_run:cmd('start server gh6035replica1 with args="true", wait_load=False, wait=False')
-test_run:cmd('start server gh6035replica2 with args="true", wait_load=False, wait=False')
+test_run:cmd('start server gh6035replica1 with args="true"')
+test_run:cmd('start server gh6035replica2 with args="true"')
 
+--
+-- While master is down make sure the replicas are
+-- connected between each other.
 test_run:switch('gh6035replica2')
 test_run:wait_upstream(test_run:get_server_id('gh6035replica1'), {status = 'follow'})
 test_run:switch('gh6035replica1')
