@@ -765,12 +765,12 @@ static int
 txn_limbo_on_rollback(struct trigger *trig, void *event)
 {
 	(void) event;
+	(void) trig;
 	struct txn *txn = (struct txn *) event;
 	/* Check whether limbo has performed the cleanup. */
 	if (txn->signature != TXN_SIGNATURE_ROLLBACK)
 		return 0;
-	struct txn_limbo_entry *entry = (struct txn_limbo_entry *) trig->data;
-	txn_limbo_abort(&txn_limbo, entry);
+	txn_limbo_abort(&txn_limbo, txn->limbo_entry);
 	return 0;
 }
 
@@ -801,7 +801,6 @@ txn_commit_try_async(struct txn *txn)
 		goto rollback;
 
 	bool is_sync = txn_has_flag(txn, TXN_WAIT_SYNC);
-	struct txn_limbo_entry *limbo_entry;
 	if (is_sync) {
 		/*
 		 * We'll need this trigger for sync transactions later,
@@ -819,8 +818,8 @@ txn_commit_try_async(struct txn *txn)
 
 		/* See txn_commit(). */
 		uint32_t origin_id = req->rows[0]->replica_id;
-		limbo_entry = txn_limbo_append(&txn_limbo, origin_id, txn);
-		if (limbo_entry == NULL)
+		txn->limbo_entry = txn_limbo_append(&txn_limbo, origin_id, txn);
+		if (txn->limbo_entry == NULL)
 			goto rollback;
 
 		if (txn_has_flag(txn, TXN_WAIT_ACK)) {
@@ -832,15 +831,14 @@ txn_commit_try_async(struct txn *txn)
 			 * assignment to let the limbo rule this
 			 * out.
 			 */
-			txn_limbo_assign_lsn(&txn_limbo, limbo_entry, lsn);
+			txn_limbo_assign_lsn(&txn_limbo, txn->limbo_entry, lsn);
 		}
 
 		/*
 		 * Set a trigger to abort waiting for confirm on
 		 * WAL write failure.
 		 */
-		trigger_create(trig, txn_limbo_on_rollback,
-			       limbo_entry, NULL);
+		trigger_create(trig, txn_limbo_on_rollback, NULL, NULL);
 		txn_on_rollback(txn, trig);
 	}
 
@@ -864,7 +862,6 @@ int
 txn_commit(struct txn *txn)
 {
 	struct journal_entry *req;
-	struct txn_limbo_entry *limbo_entry = NULL;
 
 	txn->fiber = fiber();
 
@@ -893,15 +890,15 @@ txn_commit(struct txn *txn)
 		 * After WAL write nothing should fail, even OOM
 		 * wouldn't be acceptable.
 		 */
-		limbo_entry = txn_limbo_append(&txn_limbo, origin_id, txn);
-		if (limbo_entry == NULL)
+		txn->limbo_entry = txn_limbo_append(&txn_limbo, origin_id, txn);
+		if (txn->limbo_entry == NULL)
 			goto rollback;
 	}
 
 	fiber_set_txn(fiber(), NULL);
 	if (journal_write(req) != 0 || req->res < 0) {
 		if (is_sync)
-			txn_limbo_abort(&txn_limbo, limbo_entry);
+			txn_limbo_abort(&txn_limbo, txn->limbo_entry);
 		diag_set(ClientError, ER_WAL_IO);
 		diag_log();
 		goto rollback;
@@ -914,12 +911,12 @@ txn_commit(struct txn *txn)
 			 * blocking commit is used by local
 			 * transactions only.
 			 */
-			txn_limbo_assign_local_lsn(&txn_limbo, limbo_entry,
+			txn_limbo_assign_local_lsn(&txn_limbo, txn->limbo_entry,
 						   lsn);
 			/* Local WAL write is a first 'ACK'. */
 			txn_limbo_ack(&txn_limbo, txn_limbo.owner_id, lsn);
 		}
-		if (txn_limbo_wait_complete(&txn_limbo, limbo_entry) < 0)
+		if (txn_limbo_wait_complete(&txn_limbo, txn->limbo_entry) < 0)
 			goto rollback;
 	}
 	assert(txn_has_flag(txn, TXN_IS_DONE));

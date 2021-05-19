@@ -349,6 +349,8 @@ struct txn {
 	void *engine_tx;
 	/* A fiber to wake up when transaction is finished. */
 	struct fiber *fiber;
+	/** A limbo entry associated with this transaction, if any. */
+	struct txn_limbo_entry *limbo_entry;
 	/** Timestampt of entry write start. */
 	double start_tm;
 	/**
