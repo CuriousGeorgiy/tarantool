@@ -69,6 +69,48 @@ txn_limbo_last_synchro_entry(struct txn_limbo *limbo)
 	return NULL;
 }
 
+static int
+txn_limbo_wait_lsn_assigned_f(struct trigger *trig, void *event)
+{
+	(void)event;
+	struct fiber *fiber = trig->data;
+	fiber_wakeup(fiber);
+	return 0;
+}
+
+struct txn_limbo_entry *
+txn_limbo_wait_lsn_assigned(struct txn_limbo *limbo)
+{
+	assert(!txn_limbo_is_empty(limbo));
+	struct txn_limbo_entry *entry = txn_limbo_last_synchro_entry(limbo);
+	if (entry->lsn >= 0)
+		return entry;
+
+	struct trigger write_trigger, rollback_trigger;
+	trigger_create(&write_trigger, txn_limbo_wait_lsn_assigned_f, fiber(),
+		       NULL);
+	trigger_create(&rollback_trigger, txn_limbo_wait_lsn_assigned_f,
+		       fiber(), NULL);
+	txn_on_wal_write(entry->txn, &write_trigger);
+	txn_on_rollback(entry->txn, &rollback_trigger);
+	do {
+		fiber_yield();
+		if (fiber_is_cancelled()) {
+			diag_set(FiberIsCancelled);
+			entry = NULL;
+			break;
+		}
+		if (entry->txn->signature < 0) {
+			diag_set(ClientError, ER_SYNC_ROLLBACK);
+			entry = NULL;
+			break;
+		}
+	} while (entry->lsn == -1);
+	trigger_clear(&write_trigger);
+	trigger_clear(&rollback_trigger);
+	return entry;
+}
+
 struct txn_limbo_entry *
 txn_limbo_append(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 {

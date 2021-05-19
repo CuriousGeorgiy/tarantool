@@ -1442,16 +1442,21 @@ box_quorum_on_ack_f(struct trigger *trigger, void *event)
 }
 
 /**
- * Wait until at least @a quorum of nodes confirm @a target_lsn from the node
- * with id @a lead_id.
+ * Wait until at least @a quorum of nodes confirm the last available synchronous
+ * entry from the node with id @a lead_id.
  */
 static int
-box_wait_quorum(uint32_t lead_id, int64_t target_lsn, int quorum,
+box_wait_quorum(uint32_t lead_id, struct txn_limbo_entry **entry, int quorum,
 		double timeout)
 {
 	struct box_quorum_trigger t;
 	memset(&t, 0, sizeof(t));
 	vclock_create(&t.vclock);
+
+	*entry = txn_limbo_wait_lsn_assigned(&txn_limbo);
+	if (*entry == NULL)
+		return -1;
+	int64_t target_lsn = (*entry)->lsn;
 
 	/* Take this node into account immediately. */
 	int ack_count = vclock_get(box_vclock, lead_id) >= target_lsn;
@@ -1622,22 +1627,17 @@ box_promote(void)
 		}
 	}
 
-	/*
-	 * promote() is a no-op on the limbo owner, so all the rows
-	 * in the limbo must've come through the applier meaning they already
-	 * have an lsn assigned, even if their WAL write hasn't finished yet.
-	 */
-	wait_lsn = txn_limbo_last_synchro_entry(&txn_limbo)->lsn;
-	assert(wait_lsn > 0);
-
-	rc = box_wait_quorum(former_leader_id, wait_lsn, quorum,
+	struct txn_limbo_entry *last_entry;
+	rc = box_wait_quorum(former_leader_id,&last_entry, quorum,
 			     replication_synchro_timeout);
 	if (rc == 0) {
+		wait_lsn = last_entry->lsn;
 		if (quorum < replication_synchro_quorum) {
 			diag_set(ClientError, ER_QUORUM_WAIT, quorum,
 				 "quorum was increased while waiting");
 			rc = -1;
-		} else if (wait_lsn < txn_limbo_last_synchro_entry(&txn_limbo)->lsn) {
+		} else if (last_entry !=
+			   txn_limbo_last_synchro_entry(&txn_limbo)) {
 			diag_set(ClientError, ER_QUORUM_WAIT, quorum,
 				 "new synchronous transactions appeared");
 			rc = -1;
