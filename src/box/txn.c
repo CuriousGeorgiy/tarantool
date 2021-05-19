@@ -545,6 +545,16 @@ txn_on_journal_write(struct journal_entry *entry)
 		txn_complete_fail(txn);
 		goto finish;
 	}
+
+	if (txn_has_flag(txn, TXN_WAIT_ACK) && txn->limbo_entry->lsn == -1) {
+		int64_t lsn = entry->rows[entry->n_rows - 1]->lsn;
+		/*
+		 * Must be a local entry since its lsn wasn't known prior to
+		 * the WAL write.
+		 */
+		txn_limbo_assign_local_lsn(&txn_limbo, txn->limbo_entry, lsn);
+	}
+
 	double stop_tm = ev_monotonic_now(loop());
 	double delta = stop_tm - txn->start_tm;
 	if (delta > too_long_threshold) {
@@ -906,13 +916,6 @@ txn_commit(struct txn *txn)
 	if (is_sync) {
 		if (txn_has_flag(txn, TXN_WAIT_ACK)) {
 			int64_t lsn = req->rows[req->n_rows - 1]->lsn;
-			/*
-			 * Use local LSN assignment. Because
-			 * blocking commit is used by local
-			 * transactions only.
-			 */
-			txn_limbo_assign_local_lsn(&txn_limbo, txn->limbo_entry,
-						   lsn);
 			/* Local WAL write is a first 'ACK'. */
 			txn_limbo_ack(&txn_limbo, txn_limbo.owner_id, lsn);
 		}
