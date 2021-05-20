@@ -68,7 +68,7 @@ _ = require('fiber').create(function() box.space.sync:replace{1} end)
 -- once node alive here at this moment, it won't gather quorum
 -- for this write and won't issue CONFIRM because only the
 -- master node is up and running at this moment.
-test_run:wait_cond(function() return box.info.lsn > old_lsn end, 10)
+test_run:wait_cond(function() return box.info.lsn == (old_lsn + 1) end, 10)
 
 --
 -- Stop master, it has unconfirmed (but not rolled back) record.

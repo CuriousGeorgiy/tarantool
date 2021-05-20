@@ -28,7 +28,7 @@ box.cfg({
     replication                 = repl_list,
     replication_connect_quorum  = 1, -- the master is down and second replica is not up yet
     replication_synchro_quorum  = 2,
-    replication_synchro_timeout = 1000,
+    replication_synchro_timeout = 0.001,
     replication_sync_timeout    = 5,
     election_mode               = 'voter',
 })
