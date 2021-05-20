@@ -139,11 +139,8 @@ old_lsn = box.info.lsn
 box.cfg{replication_synchro_quorum = 2}
  | ---
  | ...
-require('fiber').create(function() box.space.sync:replace{1} end)
+_ = require('fiber').create(function() box.space.sync:replace{1} end)
  | ---
- | - status: suspended
- |   name: lua
- |   id: 428
  | ...
 
 --
@@ -260,10 +257,7 @@ test_run:wait_cond(function() return box.info().election.state == 'leader' end, 
 
 --
 -- Cleanup
-test_run:switch('default')
- | ---
- | - true
- | ...
+--test_run:switch('default')
 --test_run:drop_cluster({'gh6035master', 'gh6035replica1', 'gh6035replica2'})
 
 ----
@@ -419,7 +413,7 @@ test_run:switch('default')
 --Then replica1 becomes a leader and emits PROMOTE which should rollback
 --row {1} from the 'sync' space, but keep the old {1} from 'async' space.
 --Then master is back and is elected a leader. Its old row sync {1} should
--- be considered outdated and turned into NOPs on the other nodes,
+--be considered outdated and turned into NOPs on the other nodes,
 --while row async {1} must be applied everywhere.
 --
 --I thought that if the NOP filter would use applier->instance_id, it
