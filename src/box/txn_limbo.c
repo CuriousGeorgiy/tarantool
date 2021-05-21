@@ -37,6 +37,8 @@
 
 struct txn_limbo txn_limbo;
 
+#define trace(fmt, ...) say_info("%s:%d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
+
 static inline void
 txn_limbo_create(struct txn_limbo *limbo)
 {
@@ -72,6 +74,7 @@ txn_limbo_last_synchro_entry(struct txn_limbo *limbo)
 struct txn_limbo_entry *
 txn_limbo_append(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 {
+	trace("id %u", id);
 	assert(txn_has_flag(txn, TXN_WAIT_SYNC));
 	assert(limbo == &txn_limbo);
 	/*
@@ -90,6 +93,7 @@ txn_limbo_append(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 		 * it should be done right now. See in the limbo comments why.
 		 */
 		diag_set(ClientError, ER_SYNC_ROLLBACK);
+		trace("ER_SYNC_ROLLBACK");
 		return NULL;
 	}
 	if (id == 0)
@@ -168,6 +172,7 @@ void
 txn_limbo_assign_remote_lsn(struct txn_limbo *limbo,
 			    struct txn_limbo_entry *entry, int64_t lsn)
 {
+	trace("lsn %lld", (long long)lsn);
 	assert(limbo->owner_id != REPLICA_ID_NIL);
 	assert(limbo->owner_id != instance_id);
 	assert(entry->lsn == -1);
@@ -181,6 +186,7 @@ void
 txn_limbo_assign_local_lsn(struct txn_limbo *limbo,
 			   struct txn_limbo_entry *entry, int64_t lsn)
 {
+	trace("lsn %lld", (long long)lsn);
 	assert(limbo->owner_id != REPLICA_ID_NIL);
 	assert(limbo->owner_id == instance_id);
 	assert(entry->lsn == -1);
@@ -222,6 +228,7 @@ txn_limbo_wait_complete(struct txn_limbo *limbo, struct txn_limbo_entry *entry)
 	assert(entry->lsn > 0 || !txn_has_flag(entry->txn, TXN_WAIT_ACK));
 	bool cancellable = fiber_set_cancellable(false);
 
+	trace("lsn %lld", (long long)entry->lsn);
 	if (txn_limbo_entry_is_complete(entry))
 		goto complete;
 
@@ -238,6 +245,7 @@ txn_limbo_wait_complete(struct txn_limbo *limbo, struct txn_limbo_entry *entry)
 			break;
 	}
 
+	trace();
 	assert(!txn_limbo_is_empty(limbo));
 	if (txn_limbo_first_entry(limbo) != entry) {
 		/*
@@ -251,6 +259,7 @@ txn_limbo_wait_complete(struct txn_limbo *limbo, struct txn_limbo_entry *entry)
 		goto wait;
 	}
 
+	trace();
 	/* First in the queue is always a synchronous transaction. */
 	assert(entry->lsn > 0);
 	if (entry->lsn <= limbo->confirmed_lsn) {
@@ -276,6 +285,7 @@ txn_limbo_wait_complete(struct txn_limbo *limbo, struct txn_limbo_entry *entry)
 			break;
 		fiber_wakeup(e->txn->fiber);
 	}
+	trace();
 	fiber_set_cancellable(cancellable);
 	diag_set(ClientError, ER_SYNC_QUORUM_TIMEOUT);
 	return -1;
@@ -286,6 +296,7 @@ wait:
 	} while (!txn_limbo_entry_is_complete(entry));
 
 complete:
+	trace();
 	assert(txn_limbo_entry_is_complete(entry));
 	/*
 	 * Entry is *always* removed from the limbo by the same fiber, which
@@ -318,6 +329,8 @@ txn_limbo_write_synchro(struct txn_limbo *limbo, uint16_t type, int64_t lsn,
 		.term		= term,
 	};
 
+	trace("type %d replica_id %d lsn %lld term %llu",
+	      type, limbo->owner_id, (long long)lsn, (long long)term);
 	/*
 	 * This is a synchronous commit so we can
 	 * allocate everything on a stack.
@@ -350,8 +363,8 @@ txn_limbo_write_synchro(struct txn_limbo *limbo, uint16_t type, int64_t lsn,
 		      "lsn = %lld, type = %s\n", (long long)lsn,
 		      iproto_type_name(type));
 	}
-	say_info("%s: type %d lsn %lld term %lld",
-		 __func__, type, (long long)lsn, (long long)term);
+	trace("type %d replica_id %d lsn %lld term %llu",
+	      type, limbo->owner_id, (long long)lsn, (long long)term);
 }
 
 /**
@@ -371,6 +384,7 @@ txn_limbo_write_confirm(struct txn_limbo *limbo, int64_t lsn)
 static void
 txn_limbo_read_confirm(struct txn_limbo *limbo, int64_t lsn)
 {
+	trace("lsn %lld", (long long)lsn);
 	assert(limbo->owner_id != REPLICA_ID_NIL || txn_limbo_is_empty(limbo));
 	assert(limbo == &txn_limbo);
 	struct txn_limbo_entry *e, *tmp;
@@ -426,6 +440,7 @@ txn_limbo_write_rollback(struct txn_limbo *limbo, int64_t lsn)
 static void
 txn_limbo_read_rollback(struct txn_limbo *limbo, int64_t lsn)
 {
+	trace("lsn %lld", (long long)lsn);
 	assert(limbo->owner_id != REPLICA_ID_NIL || txn_limbo_is_empty(limbo));
 	assert(limbo == &txn_limbo);
 	struct txn_limbo_entry *e, *tmp;
