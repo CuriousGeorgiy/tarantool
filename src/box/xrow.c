@@ -953,6 +953,11 @@ xrow_decode_synchro(const struct xrow_header *row, struct synchro_request *req)
 		switch (key) {
 		case IPROTO_REPLICA_ID:
 			req->replica_id = mp_decode_uint(&d);
+			if (req->replica_id >= VCLOCK_MAX) {
+				xrow_on_decode_err(data, end, ER_INVALID_MSGPACK,
+						   "request body: replica_id");
+				return -1;
+			}
 			break;
 		case IPROTO_LSN:
 			req->lsn = mp_decode_uint(&d);
