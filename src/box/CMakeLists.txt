@@ -79,6 +79,7 @@ find_package(LLVM REQUIRED CONFIG)
 llvm_map_components_to_libnames(llvm_libs core mcjit ipo orcjit executionengine interpreter mc AllTargetsAsmParsers support nativecodegen)
 separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
+include_directories(/usr/include/llvm-10)
 include_directories(/usr/include/llvm-c-10)
 
 add_custom_target(box_generate_lua_sources

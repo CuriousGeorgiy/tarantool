@@ -30,9 +30,9 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "sqlInt.h"
 #include "parse.h"
-#include "vdbeInt.h"
+#include "sqlInt.h"
+#include "mem.h"
 #include "vdbe_jit.h"
 #include "box/tuple.h"
 #include "box/port.h"

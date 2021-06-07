@@ -33,7 +33,10 @@
 #include "box/port.h"
 
 #include "sqlInt.h"
+#include "mem.h"
 #include "vdbe_jit.h"
+
+#include "llvm/Config/llvm-config.h"
 
 /** Heador for IR building and ORC JIT support. */
 #include "llvm-c/Analysis.h"
@@ -165,7 +168,7 @@ jit_load_external_types(LLVMModuleRef *module)
 	char *error_msg;
 	if (LLVMCreateMemoryBufferWithContentsOfFile(path, &buf,
 						     &error_msg) != 0) {
-		say_error(error_msg);
+		say_error("%s", error_msg);
 		return -1;
 	}
 	if (LLVMParseBitcode2(buf, module) != 0) {
@@ -233,7 +236,7 @@ llvm_init()
 	target_layout = LLVMGetDataLayoutStr(boot_module);
 	char *error_msg;
 	if (LLVMGetTargetFromTriple(target_triple, &target, &error_msg) != 0) {
-		say_error(error_msg);
+		say_error("%s", error_msg);
 		LLVMDisposeMessage(error_msg);
 		return -1;
 	}
@@ -378,12 +381,12 @@ jit_expr_emit_finish(struct jit_compile_context *context)
  */
 static void
 jit_value_store_to_mem(struct jit_compile_context *context, LLVMValueRef value,
-		       int type, LLVMValueRef mem)
+		       enum mem_type type, u32 flags, LLVMValueRef mem)
 {
 	LLVMBuilderRef builder = context->builder;
 	LLVMValueRef union_ptr = NULL;
-	if ((type & MEM_Str) != 0) {
-		union_ptr = LLVMBuildStructGEP(builder, mem, 4, "Mem->z");
+	if (type == MEM_TYPE_STR || type == MEM_TYPE_BIN) {
+		union_ptr = LLVMBuildStructGEP(builder, mem, 5, "Mem->z");
 		value = LLVMBuildBitCast(builder, value,
 					 LLVMPointerType(LLVMIntType(8), 0), "str");
 	} else {
@@ -395,10 +398,16 @@ jit_value_store_to_mem(struct jit_compile_context *context, LLVMValueRef value,
 		union_ptr = LLVMBuildBitCast(builder, mem, value_type, "Mem->u");
 	}
 	LLVMBuildStore(builder, value, union_ptr);
-	/* Also we should set type flag in struct Mem. */
-	LLVMValueRef flags_ptr = LLVMBuildStructGEP(builder, mem, 1, "Mem->flags");
+	/* Also we should set type in struct Mem. */
+	LLVMValueRef type_ptr = LLVMBuildStructGEP(builder, mem, 1, "Mem->type");
 	LLVMValueRef mem_type_val = LLVMConstInt(LLVMInt32Type(), type, false);
-	LLVMBuildStore(builder, mem_type_val, flags_ptr);
+	LLVMBuildStore(builder, mem_type_val, type_ptr);
+    if (type == MEM_TYPE_STR || type == MEM_TYPE_BIN) {
+        /* And set flags in case of string or blob value. */
+        LLVMValueRef flags_ptr = LLVMBuildStructGEP(builder, mem, 2, "Mem->flags");
+        LLVMValueRef flags_val = LLVMConstInt(LLVMInt32Type(), flags, false);
+        LLVMBuildStore(builder, flags_val, flags_ptr);
+    }
 }
 
 static void
@@ -578,7 +587,7 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 			/* Allocate struct Mem on stack and save value inside it. */
 			LLVMValueRef alloc =
 				LLVMBuildAlloca(builder, v_mem, "const_bool_mem");
-			jit_value_store_to_mem(context, value, MEM_Bool, alloc);
+			jit_value_store_to_mem(context, value, MEM_TYPE_BOOL, 0, alloc);
 			return alloc;
 		}
 		case TK_INTEGER: {
@@ -588,7 +597,7 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 			/* Allocate struct Mem on stack and save value inside it. */
 			LLVMValueRef alloc =
 				LLVMBuildAlloca(builder, v_mem, "const_int_mem");
-			jit_value_store_to_mem(context, value, MEM_Int, alloc);
+			jit_value_store_to_mem(context, value, MEM_TYPE_INT, 0, alloc);
 			return alloc;
 		}
 		case TK_FLOAT: {
@@ -596,7 +605,7 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 				LLVMBuildAlloca(builder, v_mem, "const_float_mem");
 			LLVMValueRef value = LLVMConstRealOfString(LLVMDoubleType(),
 								   expr->u.zToken);
-			jit_value_store_to_mem(context, value, MEM_Real, alloc);
+			jit_value_store_to_mem(context, value, MEM_TYPE_DOUBLE, 0, alloc);
 			return alloc;
 		}
 		case TK_STRING: {
@@ -609,8 +618,8 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 			LLVMBuildStore(builder, str_len, n);
 			LLVMValueRef str_ptr =
 				LLVMBuildGlobalStringPtr(builder, expr->u.zToken, "str");
-			jit_value_store_to_mem(context, str_ptr,
-					       MEM_Static | MEM_Term | MEM_Str,
+			jit_value_store_to_mem(context, str_ptr, MEM_TYPE_STR,
+					       MEM_Static | MEM_Term,
 					       alloc);
 			return alloc;
 		}
@@ -657,24 +666,24 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 			LLVMValueRef flags =
 				LLVMBuildStructGEP(builder, alloc_mem, 1, "flags");
 			LLVMValueRef null_type =
-				LLVMConstInt(LLVMInt32Type(), MEM_Null, false);
+				LLVMConstInt(LLVMInt32Type(), MEM_TYPE_NULL, false);
 			LLVMBuildStore(builder, null_type, flags);
 			return alloc_mem;
 		}
 		case TK_UMINUS: {
 			struct Expr *lhs = expr->pLeft;
 			LLVMValueRef value = NULL;
-			int mem_flags = 0;
+			enum mem_type type = 0;
 			if (lhs->op == TK_INTEGER) {
 				int64_t raw_value = expr_to_int(expr->pLeft);
 				value = LLVMConstInt(LLVMInt64Type(),
 						     -raw_value, false);
-				mem_flags = MEM_Int;
+                type = MEM_TYPE_INT;
 			} else if (lhs->op == TK_FLOAT) {
 				double raw_value = atof(expr->pLeft->u.zToken);
 				value = LLVMConstReal(LLVMDoubleType(),
 						      -raw_value);
-				mem_flags = MEM_Real;
+                type = MEM_TYPE_DOUBLE;
 			} else {
 				struct Expr zero;
 				zero.flags = EP_IntValue | EP_TokenOnly;
@@ -688,7 +697,7 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 			}
 			LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
 							     "const_uval_mem");
-			jit_value_store_to_mem(context, value, mem_flags, alloc);
+			jit_value_store_to_mem(context, value, type, 0, alloc);
 			return alloc;
 		}
 		case TK_CONCAT: {

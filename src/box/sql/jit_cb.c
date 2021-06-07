@@ -32,6 +32,7 @@
 #include "box/port.h"
 
 #include "sqlInt.h"
+#include "mem.h"
 #include "vdbe_jit.h"
 
 /**
@@ -42,24 +43,22 @@ int
 jit_mem_binop_exec(struct Mem *lhs, struct Mem *rhs, int op, struct Mem *output)
 {
 	assert(output != NULL);
-	int lhs_mem_type = lhs->flags & MEM_PURE_TYPE_MASK;
-	int rhs_mem_type = rhs->flags & MEM_PURE_TYPE_MASK;
 
-	if (lhs_mem_type == MEM_Null || rhs_mem_type == MEM_Null) {
-		output->flags = MEM_Null;
+	if (lhs->type == MEM_TYPE_NULL || rhs->type == MEM_TYPE_NULL) {
+		output->type = MEM_TYPE_NULL;
 		output->u.i = 0;
 		return 0;
 	}
 
-	if ((lhs_mem_type != MEM_Int && lhs_mem_type != MEM_Real) ||
-	    (rhs_mem_type != MEM_Int && rhs_mem_type != MEM_Real)) {
+	if ((lhs->type != MEM_TYPE_INT && lhs->type != MEM_TYPE_DOUBLE) ||
+	    (rhs->type != MEM_TYPE_INT && rhs->type != MEM_TYPE_DOUBLE)) {
 		diag_set(ClientError, ER_JIT_EXECUTION, "attempt at providing "\
 			 "arithmetic operation on non-numeric values");
 		return -1;
 	}
 
-	if (lhs_mem_type == MEM_Int && rhs_mem_type == MEM_Int) {
-		output->flags = MEM_Int;
+	if (lhs->type == MEM_TYPE_INT && rhs->type == MEM_TYPE_INT) {
+		output->type = MEM_TYPE_INT;
 		switch (op) {
 			case ADD: output->u.i = lhs->u.i + rhs->u.i; break;
 			case SUB: output->u.i = lhs->u.i - rhs->u.i; break;
@@ -76,8 +75,8 @@ jit_mem_binop_exec(struct Mem *lhs, struct Mem *rhs, int op, struct Mem *output)
 		}
 		return 0;
 	}
-	double f_lhs = lhs_mem_type == MEM_Real ? lhs->u.r : lhs->u.i;
-	double f_rhs = rhs_mem_type == MEM_Real ? rhs->u.r : rhs->u.i;
+	double f_lhs = lhs->type == MEM_TYPE_DOUBLE ? lhs->u.r : lhs->u.i;
+	double f_rhs = rhs->type == MEM_TYPE_DOUBLE ? rhs->u.r : rhs->u.i;
 	switch (op) {
 		case ADD: output->u.r = f_lhs + f_rhs; break;
 		case SUB: output->u.r = f_lhs - f_rhs; break;
@@ -93,7 +92,7 @@ jit_mem_binop_exec(struct Mem *lhs, struct Mem *rhs, int op, struct Mem *output)
 		default: unreachable();
 	}
 
-	output->flags = MEM_Real;
+	output->type = MEM_TYPE_DOUBLE;
 	return 0;
 }
 
@@ -101,11 +100,9 @@ int
 jit_mem_cmp_exec(struct Mem *lhs, struct Mem *rhs, int cmp, struct Mem *output)
 {
 	assert(output != NULL);
-	int lhs_mem_type = lhs->flags & MEM_PURE_TYPE_MASK;
-	int rhs_mem_type = rhs->flags & MEM_PURE_TYPE_MASK;
 
-	if (lhs_mem_type == MEM_Null || rhs_mem_type == MEM_Null) {
-		output->flags = MEM_Null;
+	if (lhs->type == MEM_TYPE_NULL || rhs->type == MEM_TYPE_NULL) {
+		output->type = MEM_TYPE_NULL;
 		output->u.i = 0;
 		return 0;
 	}
@@ -130,28 +127,26 @@ jit_mem_predicate_exec(struct Mem *lhs, struct Mem *rhs, int predicate,
 		       struct Mem *output)
 {
 	assert(output != NULL);
-	int lhs_mem_type = lhs->flags & MEM_PURE_TYPE_MASK;
-	int rhs_mem_type = rhs->flags & MEM_PURE_TYPE_MASK;
 
 	/* 0 == FALSE, 1 == TRUE, 2 == NULL */
 	int v1, v2;
 
-	if ((lhs_mem_type & MEM_Null) != 0) {
+	if (lhs->type == MEM_TYPE_NULL) {
 		v1 = 2;
-	} else if ((lhs_mem_type & MEM_Int) != 0) {
+	} else if (lhs->type == MEM_TYPE_INT) {
 		v1 = lhs->u.i != 0;
 	} else {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
-			 sql_value_text(lhs), "integer");
+			 mem_str(lhs), "integer");
 		return -1;
 	}
-	if ((rhs_mem_type & MEM_Null) != 0) {
+	if (rhs->type == MEM_TYPE_NULL) {
 		v2 = 2;
-	} else if ((rhs_mem_type & MEM_Int) != 0) {
+	} else if (rhs->type == MEM_TYPE_INT) {
 		v2 = rhs->u.i != 0;
 	} else {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
-			 sql_value_text(rhs), "integer");
+			 mem_str(rhs), "integer");
 		return -1;
 	}
 	static const unsigned char and_table[] = { 0, 0, 0, 0, 1, 2, 0, 2, 2 };
@@ -162,10 +157,10 @@ jit_mem_predicate_exec(struct Mem *lhs, struct Mem *rhs, int predicate,
 	if (predicate == OR)
 		v1 = or_table[v1 * 3 + v2];
 	if (v1 == 2) {
-		output->flags = MEM_Null;
+		output->type = MEM_TYPE_NULL;
 	} else {
 		output->u.i = v1;
-		output->flags = MEM_Int;
+		output->type = MEM_TYPE_INT;
 	}
 	return 0;
 }
@@ -175,33 +170,18 @@ jit_mem_concat_exec(struct Mem *lhs, struct Mem *rhs, int unused,
 		    struct Mem *output)
 {
 	(void) unused;
-	uint32_t str_type_p1 = lhs->flags & (MEM_Blob | MEM_Str);
-	uint32_t str_type_p2 = rhs->flags & (MEM_Blob | MEM_Str);
-	if (str_type_p1 == 0 || str_type_p2 == 0) {
-		char *inconsistent_type = str_type_p1 == 0 ?
+	if ((lhs->type != MEM_TYPE_STR && lhs->type != MEM_TYPE_BIN) ||
+    (rhs->type != MEM_TYPE_STR && rhs->type != MEM_TYPE_BIN)) {
+		char *inconsistent_type = (lhs->type & (MEM_TYPE_STR | MEM_TYPE_BIN)) == 0 ?
 					  mem_type_to_str(lhs) :
 					  mem_type_to_str(rhs);
 		diag_set(ClientError, ER_INCONSISTENT_TYPES, "TEXT or BLOB",
 			 inconsistent_type);
 		return -1;
 	}
-	uint32_t total_len = lhs->n + rhs->n;
-	if (sqlVdbeMemGrow(output, total_len + 2, output == rhs)) {
-		diag_set(OutOfMemory, total_len + 2, "sql malloc", "mem");
-		return -1;
+	if (mem_concat(lhs, rhs, output) != 0) {
+	    return -1;
 	}
-	if (lhs->flags & MEM_Str)
-		MemSetTypeFlag(output, MEM_Str);
-	else
-		MemSetTypeFlag(output, MEM_Blob);
-	if (output != rhs) {
-		memcpy(output->z, rhs->z, rhs->n);
-	}
-	memcpy(&output->z[rhs->n], lhs->z, lhs->n);
-	output->z[total_len]=0;
-	output->z[total_len + 1] = 0;
-	output->flags |= MEM_Term;
-	output->n = (int) total_len;
 	return 0;
 }
 
@@ -212,10 +192,10 @@ jit_agg_max_exec(struct Mem *best, struct Mem *current)
 	if (best->flags != 0) {
 		int cmp = sqlMemCompare(best, current, NULL);
 		if (cmp < 0)
-			sqlVdbeMemCopy(best, current);
+		    mem_copy(best, current);
 	} else {
 		best->db = sql_get();
-		sqlVdbeMemCopy(best, current);
+		mem_copy(best, current);
 	}
 	return 0;
 }
@@ -225,9 +205,9 @@ jit_agg_count_exec(struct Mem *count, struct Mem *current)
 {
 	if (count->flags == 0) {
 		count->u.i = 0;
-		count->flags = MEM_Int;
+		count->type = MEM_TYPE_INT;
 	}
-	if ((current->flags & MEM_Null) == 0)
+	if (current->type != MEM_TYPE_NULL)
 		count->u.i++;
 	return 0;
 }
@@ -240,17 +220,17 @@ jit_agg_sum_exec(struct Mem *sum, struct Mem *current)
 		sum->u = current->u;
 		return 0;
 	}
-	if ((current->flags & MEM_Null) == 0) {
-		if ((current->flags & MEM_Int) != 0) {
-			if ((sum->flags & MEM_Int) != 0)
+	if (current->type != MEM_TYPE_NULL) {
+		if (current->type == MEM_TYPE_INT) {
+			if (sum->type == MEM_TYPE_INT)
 				sum->u.i += current->u.i;
-			else if ((sum->flags & MEM_Real) != 0)
+			else if (sum->type == MEM_TYPE_DOUBLE)
 				sum->u.r += current->u.i;
-		} else if ((current->flags & MEM_Real) != 0) {
-			if ((sum->flags & MEM_Int) != 0) {
+		} else if (current->type == MEM_TYPE_DOUBLE) {
+			if (sum->type == MEM_TYPE_INT) {
 				sum->u.r += sum->u.i + current->u.r;
-				sum->flags = MEM_Real;
-			} else if ((sum->flags & MEM_Real) != 0)
+				sum->flags = MEM_TYPE_DOUBLE;
+			} else if (sum->flags == MEM_TYPE_DOUBLE)
 				sum->u.r += current->u.r;
 		} else {
 			diag_set(ClientError, ER_JIT_EXECUTION,
@@ -273,7 +253,7 @@ jit_tuple_field_fetch(struct tuple *tuple, uint32_t fieldno, struct Mem *output)
 	const char *end = field;
 	mp_next(&end);
 	uint32_t unused;
-	if (vdbe_decode_msgpack_into_mem(field, output, &unused) != 0)
+	if (mem_from_mp_ephemeral(output, field, &unused) != 0)
 		return -1;
 	return 1;
 }
@@ -281,7 +261,7 @@ jit_tuple_field_fetch(struct tuple *tuple, uint32_t fieldno, struct Mem *output)
 void
 jit_debug_print(const char *msg)
 {
-	say_debug(msg);
+	say_debug("%s", msg);
 }
 
 extern int
@@ -328,7 +308,7 @@ jit_mem_to_port(struct Mem *mem, int mem_count, struct port *port)
 	if (tuple == NULL)
 		goto error;
 	region_truncate(region, svp);
-	return port_tuple_add(port, tuple);
+	return port_c_add_tuple(port, tuple);
 error:
 	region_truncate(region, svp);
 	return -1;

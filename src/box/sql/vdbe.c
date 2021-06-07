@@ -4137,13 +4137,13 @@ case OP_JitExecuteExpr: {        /* jump */
 	struct Mem tmp = { .u.i = 1 };
 	switch (pOp->p5) {
 		case COMPILE_EXPR_RS:
-			output = out2Prerelease(p, pOp);
+			output = vdbe_prepare_null_out(p, pOp->p2);
 			break;
 		case COMPILE_EXPR_WHERE_COND:
 			output = &tmp;
 			break;
 		case COMPILE_EXPR_AGG:
-			output = out2Prerelease(p, pOp);
+			output = vdbe_prepare_null_out(p, pOp->p2);
 			output->flags = 0;
 			pOp->p5 = COMPILE_EXPR_AGG_STEP;
 			break;
@@ -4154,7 +4154,6 @@ case OP_JitExecuteExpr: {        /* jump */
 	}
 	if (jit_execute(p->jit_context, cursor->uc.pCursor->last_tuple,
 			pOp->p4.z, output) != 0) {
-		rc = SQL_TARANTOOL_ERROR;
 		goto abort_due_to_error;
 	}
 	if (pOp->p5 == COMPILE_EXPR_WHERE_COND) {

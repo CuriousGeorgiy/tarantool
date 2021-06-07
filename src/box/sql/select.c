@@ -5392,11 +5392,11 @@ agg_can_be_jitted(const struct AggInfo_func *agg)
 {
 	if (! jit_is_enabled())
 		return false;
-	if (strcmp(agg->pFunc->zName, "max") == 0)
+	if (strcmp(agg->func->def->name, "max") == 0)
 		return true;
-	if (strcmp(agg->pFunc->zName, "count") == 0)
+	if (strcmp(agg->func->def->name, "count") == 0)
 		return true;
-	if (strcmp(agg->pFunc->zName, "sum") == 0)
+	if (strcmp(agg->func->def->name, "sum") == 0)
 		return true;
 	return false;
 }
@@ -5470,7 +5470,7 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 		}
 
 		if (can_be_jitted) {
-			if (jit_emit_agg(ctx, pF->pFunc->zName) != 0) {
+			if (jit_emit_agg(ctx, pF->func->def->name) != 0) {
 				pParse->is_aborted = true;
 				return;
 			}
@@ -5483,7 +5483,7 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 					"JIT for aggregate");
 		} else {
 			sqlVdbeAddOp3(v, OP_AggStep0, 0, regAgg, pF->iMem);
-			sqlVdbeAppendP4(v, pF->pFunc, P4_FUNCDEF);
+			sqlVdbeAppendP4(v, pF->func, P4_FUNC);
 			sqlVdbeChangeP5(v, (u8) nArg);
 		}
 
