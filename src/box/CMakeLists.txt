@@ -23,9 +23,6 @@ lua_source(lua_sources lua/merger.lua)
 set(bin_sources)
 bin_source(bin_sources bootstrap.snap bootstrap.h)
 
-add_library(jit_types STATIC sql/jit_types.c)
-target_compile_options(jit_types PUBLIC -emit-llvm)
-
 set(sql_sources
     sql/opcodes.c
     sql/parse.c
@@ -275,7 +272,22 @@ add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.c
     DEPENDS ${SQL_SRC_DIR}/vdbe.c ${EXT_SRC_DIR}/mkopcodec.sh ${SQL_BIN_DIR}/parse.h
         ${SQL_BIN_DIR}/opcodes.h)
 
+set(jit_types_module)
+bin_source(jit_types_module sql/jit_types.bc sql/jit_types.h)
+add_custom_target(generate_jit_types DEPENDS
+        ${jit_types_module})
+
+get_property(include_dirs_for_jit_types_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach(dir ${include_dirs_for_jit_types_compilation})
+    string(APPEND jit_types_includes_compiler_string "-I${dir};")
+endforeach()
+
+add_custom_command(OUTPUT ${SQL_SRC_DIR}/jit_types.bc
+        COMMAND clang-10 ${jit_types_includes_compiler_string} -flto -o jit_types.bc -c jit_types.c
+        WORKING_DIRECTORY ${SQL_SRC_DIR}
+        DEPENDS ${SQL_BIN_DIR}/parse.h)
+
 target_link_libraries(box box_error tuple stat xrow xlog vclock crc32 scramble
                       raft ${common_libraries} ${llvm_libs})
 
-add_dependencies(box build_bundled_libs generate_sql_files)
+add_dependencies(box build_bundled_libs generate_sql_files generate_jit_types)

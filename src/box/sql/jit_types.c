@@ -30,7 +30,7 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "parse.h"
+
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbe_jit.h"

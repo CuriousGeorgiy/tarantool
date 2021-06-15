@@ -36,6 +36,8 @@
 #include "mem.h"
 #include "vdbe_jit.h"
 
+#include "jit_types.h"
+
 #include "llvm/Config/llvm-config.h"
 
 /** Heador for IR building and ORC JIT support. */
@@ -162,15 +164,9 @@ jit_orc_map_extern_funcs()
 static int
 jit_load_external_types(LLVMModuleRef *module)
 {
-	/* FIXME: hardcoded path. */
-	const char *path = "src/box/sql/jit_types.bc";
-	LLVMMemoryBufferRef buf;
-	char *error_msg;
-	if (LLVMCreateMemoryBufferWithContentsOfFile(path, &buf,
-						     &error_msg) != 0) {
-		say_error("%s", error_msg);
-		return -1;
-	}
+    LLVMMemoryBufferRef buf = LLVMCreateMemoryBufferWithMemoryRange((const char *) jit_types_bin,
+                                                                    lengthof(jit_types_bin),
+                                                                    NULL, false);
 	if (LLVMParseBitcode2(buf, module) != 0) {
 		say_error("error during parsing pre-compiled IR");
 		return -1;
