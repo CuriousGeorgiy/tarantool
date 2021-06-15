@@ -1867,6 +1867,21 @@ box_set_crash(void)
 	return 0;
 }
 
+int box_set_jit_enabled(void)
+{
+    struct session *session = current_session();
+    if (session == NULL)
+        return -1;
+    if (cfg_getb("jit_enabled")) {
+        /* SQL_VdbeJIT */
+        session->sql_flags |= 0x00000008;
+    } else {
+        /* SQL_VdbeJIT */
+        session->sql_flags &= ~0x00000008;
+    }
+    return 0;
+}
+
 /* }}} configuration bindings */
 
 /**

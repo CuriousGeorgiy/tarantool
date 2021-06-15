@@ -1122,20 +1122,19 @@ struct sql {
  * Possible values for the sql.flags.
  */
 #define SQL_VdbeTrace      0x00000001	/* True to trace VDBE execution */
-/* Debug print info about SQL query as it parsed */
-#define PARSER_TRACE_FLAG  0x00000002
+#define PARSER_TRACE_FLAG  0x00000002   /* Debug print info about SQL query as it parsed */
 #define SQL_FullColNames   0x00000004	/* Show full column names on SELECT */
+#define SQL_VdbeJIT        0x00000008	/* VDBE may use LLVM JIT to speed up
+                                         * execution of byte-code. */
 #define SQL_SqlTrace       0x00000200	/* Debug print SQL as it executes */
-#define SQL_SelectTrace    0x00000800       /* Debug info about select statement */
-#define SQL_WhereTrace     0x00008000       /* Debug info about optimizer's work */
+#define SQL_SelectTrace    0x00000800   /* Debug info about select statement */
+#define SQL_WhereTrace     0x00008000   /* Debug info about optimizer's work */
 #define SQL_VdbeListing    0x00000400	/* Debug listings of VDBE programs */
 #define SQL_ReverseOrder   0x00020000	/* Reverse unordered SELECTs */
 #define SQL_RecTriggers    0x00040000	/* Enable recursive triggers */
 #define SQL_AutoIndex      0x00100000	/* Enable automatic indexes */
 #define SQL_EnableTrigger  0x01000000	/* True to enable triggers */
 #define SQL_DeferFKs       0x02000000	/* Defer all FK constraints */
-#define SQL_VdbeJIT        0x04000000	/* VDBE may use LLVM JIT to speed up
-					 * execution of byte-code. */
 #define SQL_VdbeEQP        0x08000000	/* Debug EXPLAIN QUERY PLAN */
 #define SQL_FullMetadata   0x04000000	/* Display optional properties
 					 * (nullability, autoincrement, alias)
