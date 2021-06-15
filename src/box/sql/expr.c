@@ -2121,15 +2121,33 @@ static int
 expr_node_can_be_jitted(struct Walker *walker, struct Expr *expr)
 {
 	switch (expr->op) {
-		case TK_FUNCTION:
-		case TK_BETWEEN:
-		case TK_IN:
-		case TK_VARIABLE:
-		case TK_AGG_FUNCTION:
-			walker->eCode = 0;
-			return WRC_Abort;
-		default:
-			return WRC_Continue;
+        case TK_PLUS:
+        case TK_MINUS:
+        case TK_STAR:
+        case TK_SLASH:
+        case TK_AND:
+        case TK_OR:
+        case TK_LE:
+        case TK_LT:
+        case TK_GE:
+        case TK_GT:
+        case TK_NE:
+        case TK_EQ:
+        case TK_TRUE:
+        case TK_FALSE:
+        case TK_INTEGER:
+        case TK_FLOAT:
+        case TK_STRING:
+        case TK_COLUMN:
+        case TK_AGG_COLUMN:
+        case TK_UNKNOWN:
+        case TK_NULL:
+        case TK_UMINUS:
+        case TK_CONCAT:
+            return WRC_Continue;
+        default:
+            walker->eCode = 0;
+            return WRC_Abort;
 	}
 }
 
