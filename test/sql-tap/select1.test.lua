@@ -2,6 +2,10 @@
 local test = require("sqltester")
 test:plan(173)
 
+box.cfg{
+    jit_enabled=true
+}
+
 local function set_full_column_names(value)
     box.space._session_settings:update('sql_full_column_names', {
         {'=', 2, value}
