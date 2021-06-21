@@ -359,9 +359,10 @@ jit_expr_emit_finish(struct jit_compile_context *context)
 		LLVMDisposeMessage(error_msg);
 		return -1;
 	}
-	//char *module_str = LLVMPrintModuleToString(context->module);
-	//say_info("LLVM module IR: %s", module_str);
-	//LLVMDisposeMessage(module_str);
+	if (LLVMPrintModuleToFile(context->module, "llvm_module_ir.bc", &error_msg) != 0) {
+		say_error("%s", error_msg);
+		LLVMDisposeMessage(error_msg);
+	}
 	if (LLVMVerifyModule(context->module, LLVMReturnStatusAction,
 			     &error_msg) != 0) {
 		diag_set(ClientError, ER_LLVM_IR_COMPILATION, error_msg);
@@ -551,166 +552,159 @@ jit_expr_build_value(struct jit_compile_context *context, struct Expr *expr)
 	assert(expr != NULL);
 	LLVMBuilderRef builder = context->builder;
 	switch (expr->op) {
-		case TK_PLUS:
-		case TK_MINUS:
-		case TK_STAR:
-		case TK_SLASH: {
-			enum binop op = tokenop_to_binop(expr->op);
-			return jit_expr_build_binop_call(context, expr, op,
-							 f_mem_binop_exec);
-		}
-		case TK_AND:
-		case TK_OR: {
-			enum predicate op = tokenop_to_predicate(expr->op);
-			return jit_expr_build_binop_call(context, expr, op,
-							 f_mem_predicate_exec);
-		}
-		case TK_LE:
-		case TK_LT:
-		case TK_GE:
-		case TK_GT:
-		case TK_NE:
-		case TK_EQ: {
-			enum cmpop op = tokenop_to_cmpop(expr->op);
-			return jit_expr_build_binop_call(context, expr, op,
-							 f_mem_cmp_exec);
-		}
-		case TK_TRUE:
-		case TK_FALSE: {
-			bool raw_value = expr->op == TK_TRUE;
-			LLVMValueRef value = LLVMConstInt(LLVMInt64Type(),
-							  raw_value, false);
-			/* Allocate struct Mem on stack and save value inside it. */
-			LLVMValueRef alloc =
-				LLVMBuildAlloca(builder, v_mem, "const_bool_mem");
-			jit_value_store_to_mem(context, value, MEM_TYPE_BOOL, 0, alloc);
-			return alloc;
-		}
-		case TK_INTEGER: {
-			int64_t raw_value = expr_to_int(expr);
-			LLVMValueRef value = LLVMConstInt(LLVMInt64Type(),
-							  raw_value, false);
-			/* Allocate struct Mem on stack and save value inside it. */
-			LLVMValueRef alloc =
-				LLVMBuildAlloca(builder, v_mem, "const_int_mem");
-			jit_value_store_to_mem(context, value, MEM_TYPE_INT, 0, alloc);
-			return alloc;
-		}
-		case TK_FLOAT: {
-			LLVMValueRef alloc =
-				LLVMBuildAlloca(builder, v_mem, "const_float_mem");
-			LLVMValueRef value = LLVMConstRealOfString(LLVMDoubleType(),
-								   expr->u.zToken);
-			jit_value_store_to_mem(context, value, MEM_TYPE_DOUBLE, 0, alloc);
-			return alloc;
-		}
-		case TK_STRING: {
-			LLVMValueRef alloc =
-				LLVMBuildAlloca(builder, v_mem, "const_str_mem");
-			LLVMValueRef str_len = LLVMConstInt(LLVMInt32Type(),
-							    strlen(expr->u.zToken),
-							    false);
-			LLVMValueRef n = LLVMBuildStructGEP(builder, alloc, 3, "Mem->n");
-			LLVMBuildStore(builder, str_len, n);
-			LLVMValueRef str_ptr =
-				LLVMBuildGlobalStringPtr(builder, expr->u.zToken, "str");
-			jit_value_store_to_mem(context, str_ptr, MEM_TYPE_STR,
-					       MEM_Static | MEM_Term,
-					       alloc);
-			return alloc;
-		}
-		case TK_COLUMN:
-		case TK_AGG_COLUMN: {
-			struct mh_i32ptr_t *h = context->decoded_fields;
-			uint32_t fieldno = expr->iColumn;
-			/* To avoid decoding the same field twice we use hash. */
-			mh_int_t k = mh_i32ptr_find(h, fieldno, NULL);
-			if (k != mh_end(h))
-				return mh_i32ptr_node(h, k)->val;
-			LLVMValueRef tuple_fetch =
-				jit_get_func_decl(context->module, f_tuple_fetch);
-			if (tuple_fetch == NULL) {
-				diag_set(ClientError, ER_LLVM_IR_COMPILATION,
-					 "function's declaration is missing");
-				return NULL;
-			}
-			/* Load field number into memory. */
-			LLVMValueRef fieldno_val =
-				LLVMConstInt(LLVMInt32Type(), fieldno, false);
-			LLVMValueRef output =
-				LLVMBuildAlloca(builder, v_mem, "decoded_field_mem");
-			LLVMValueRef args[] = { context->func_ctx->tuple,
-						fieldno_val, output };
-			LLVMValueRef res =
-				LLVMBuildCall(builder, tuple_fetch, args,
-					      lengthof(args), "tuple_decode");
-			assert(res != NULL);
-			struct mh_i32ptr_node_t node = { fieldno, output };
-			struct mh_i32ptr_node_t *old_node = NULL;
-			if (mh_i32ptr_put(h, &node, &old_node, NULL) == mh_end(h)) {
-				diag_set(OutOfMemory, 0, "mh_i32ptr_put",
-					 "mh_i32ptr_node_t");
-				return NULL;
-			}
-			assert(old_node == NULL);
-			return output;
-		}
-		case TK_UNKNOWN:
-		case TK_NULL: {
-			LLVMValueRef alloc_mem =
-				LLVMBuildAlloca(builder, v_mem, "null_mem");
-			LLVMValueRef flags =
-				LLVMBuildStructGEP(builder, alloc_mem, 1, "flags");
-			LLVMValueRef null_type =
-				LLVMConstInt(LLVMInt32Type(), MEM_TYPE_NULL, false);
-			LLVMBuildStore(builder, null_type, flags);
-			return alloc_mem;
-		}
-		case TK_UMINUS: {
-			struct Expr *lhs = expr->pLeft;
-			LLVMValueRef value = NULL;
-			enum mem_type type = 0;
-			if (lhs->op == TK_INTEGER) {
-				int64_t raw_value = expr_to_int(expr->pLeft);
-				value = LLVMConstInt(LLVMInt64Type(),
-						     -raw_value, false);
-                type = MEM_TYPE_INT;
-			} else if (lhs->op == TK_FLOAT) {
-				double raw_value = atof(expr->pLeft->u.zToken);
-				value = LLVMConstReal(LLVMDoubleType(),
-						      -raw_value);
-                type = MEM_TYPE_DOUBLE;
-			} else {
-				struct Expr zero;
-				zero.flags = EP_IntValue | EP_TokenOnly;
-				zero.u.iValue = 0;
-				zero.op = TK_INTEGER;
-				struct Expr sub;
-				sub.pLeft = &zero;
-				sub.pRight = lhs;
-				sub.op = TK_MINUS;
-				return jit_expr_build_value(context, &sub);
-			}
-			LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
-							     "const_uval_mem");
-			jit_value_store_to_mem(context, value, type, 0, alloc);
-			return alloc;
-		}
-		case TK_CONCAT: {
-			/*
-			 * FIXME: jit_mem_concat_exec() allocates memory
-			 * using sqlDbMalloc(). We must free it at the
-			 * end of execution. To do so we must set MEM_Dyn
-			 * flag and zMalloc field.
-			 */
-			return jit_expr_build_binop_call(context, expr, 0,
-							 f_mem_concat_exec);
-		}
-		default: {
+	case TK_PLUS:
+	case TK_MINUS:
+	case TK_STAR:
+	case TK_SLASH: {
+		enum binop op = tokenop_to_binop(expr->op);
+		return jit_expr_build_binop_call(context, expr, op,
+						 f_mem_binop_exec);
+	}
+	case TK_AND:
+	case TK_OR: {
+		enum predicate op = tokenop_to_predicate(expr->op);
+		return jit_expr_build_binop_call(context, expr, op,
+						 f_mem_predicate_exec);
+	}
+	case TK_LE:
+	case TK_LT:
+	case TK_GE:
+	case TK_GT:
+	case TK_NE:
+	case TK_EQ: {
+		enum cmpop op = tokenop_to_cmpop(expr->op);
+		return jit_expr_build_binop_call(context, expr, op,
+						 f_mem_cmp_exec);
+	}
+	case TK_TRUE:
+	case TK_FALSE: {
+		bool raw_value = expr->op == TK_TRUE;
+		LLVMValueRef value = LLVMConstInt(LLVMInt64Type(),
+						  raw_value, false);
+		LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
+						     "const_bool_mem");
+		jit_value_store_to_mem(context, value, MEM_TYPE_BOOL, 0, alloc);
+		return alloc;
+	}
+	case TK_INTEGER: {
+		int64_t raw_value = expr_to_int(expr);
+		LLVMValueRef value = LLVMConstInt(LLVMInt64Type(),
+						  raw_value, false);
+		LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
+						     "const_int_mem");
+		jit_value_store_to_mem(context, value,  MEM_TYPE_UINT, 0, alloc);
+		return alloc;
+	}
+	case TK_FLOAT: {
+		LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
+						     "const_float_mem");
+		LLVMValueRef value = LLVMConstRealOfString(LLVMDoubleType(),
+							   expr->u.zToken);
+		jit_value_store_to_mem(context, value, MEM_TYPE_DOUBLE, 0,
+				       alloc);
+		return alloc;
+	}
+	case TK_STRING: {
+		LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
+						     "const_str_mem");
+		LLVMValueRef str_len = LLVMConstInt(LLVMInt32Type(),
+						    strlen(expr->u.zToken),
+						    false);
+		LLVMValueRef n = LLVMBuildStructGEP(builder, alloc, 4, "Mem->n");
+		LLVMBuildStore(builder, str_len, n);
+		LLVMValueRef str_ptr = LLVMBuildGlobalStringPtr(builder,
+								expr->u.zToken,
+								"str");
+		jit_value_store_to_mem(context, str_ptr, MEM_TYPE_STR,
+				       MEM_Static | MEM_Term, alloc);
+		return alloc;
+	}
+	case TK_COLUMN_REF:
+	case TK_AGG_COLUMN: {
+		struct mh_i32ptr_t *h = context->decoded_fields;
+		uint32_t fieldno = expr->iColumn;
+		/* To avoid decoding the same field twice we use hash. */
+		mh_int_t k = mh_i32ptr_find(h, fieldno, NULL);
+		if (k != mh_end(h))
+			return mh_i32ptr_node(h, k)->val;
+		LLVMValueRef tuple_fetch =
+			jit_get_func_decl(context->module, f_tuple_fetch);
+		if (tuple_fetch == NULL) {
 			diag_set(ClientError, ER_LLVM_IR_COMPILATION,
-				  "unsupported expression type");
+				 "function's declaration is missing");
 			return NULL;
 		}
+		/* Load field number into memory. */
+		LLVMValueRef fieldno_val =
+			LLVMConstInt(LLVMInt32Type(), fieldno, false);
+		LLVMValueRef output =
+			LLVMBuildAlloca(builder, v_mem, "decoded_field_mem");
+		LLVMValueRef args[] = { context->func_ctx->tuple,
+					fieldno_val, output };
+		LLVMValueRef res =
+			LLVMBuildCall(builder, tuple_fetch, args,
+				      lengthof(args), "tuple_decode");
+		assert(res != NULL);
+		struct mh_i32ptr_node_t node = { fieldno, output };
+		struct mh_i32ptr_node_t *old_node = NULL;
+		if (mh_i32ptr_put(h, &node, &old_node, NULL) == mh_end(h)) {
+			diag_set(OutOfMemory, 0, "mh_i32ptr_put",
+				 "mh_i32ptr_node_t");
+			return NULL;
+		}
+		assert(old_node == NULL);
+		return output;
+	}
+	case TK_UNKNOWN:
+	case TK_NULL: {
+		LLVMValueRef alloc_mem = LLVMBuildAlloca(builder, v_mem, "null_mem");
+		LLVMValueRef type = LLVMBuildStructGEP(builder, alloc_mem, 1,
+						       "Mem->type");
+		LLVMValueRef null_type = LLVMConstInt(LLVMInt32Type(),
+						      MEM_TYPE_NULL, false);
+		LLVMBuildStore(builder, null_type, type);
+		return alloc_mem;
+	}
+	case TK_UMINUS: {
+		struct Expr *lhs = expr->pLeft;
+		LLVMValueRef value = NULL;
+		enum mem_type type;
+		if (lhs->op == TK_INTEGER) {
+			int64_t raw_value = expr_to_int(expr->pLeft);
+			value = LLVMConstInt(LLVMInt64Type(), -raw_value, true);
+			type = MEM_TYPE_INT;
+		} else if (lhs->op == TK_FLOAT) {
+			double raw_value = atof(expr->pLeft->u.zToken);
+			value = LLVMConstReal(LLVMDoubleType(), -raw_value);
+			type = MEM_TYPE_DOUBLE;
+		} else {
+			struct Expr zero;
+			zero.flags = EP_IntValue | EP_TokenOnly;
+			zero.u.iValue = 0;
+			zero.op = TK_INTEGER;
+			struct Expr sub;
+			sub.pLeft = &zero;
+			sub.pRight = lhs;
+			sub.op = TK_MINUS;
+			return jit_expr_build_value(context, &sub);
+		}
+		LLVMValueRef alloc = LLVMBuildAlloca(builder, v_mem,
+						     "const_uval_mem");
+		jit_value_store_to_mem(context, value, type, 0, alloc);
+		return alloc;
+	}
+	case TK_CONCAT: {
+		/*
+		 * FIXME: jit_mem_concat_exec() allocates memory
+		 * using sqlDbMalloc(). We must free it at the
+		 * end of execution. To do so we must set MEM_Dyn
+		 * flag and zMalloc field.
+		 */
+		return jit_expr_build_binop_call(context, expr, 0, f_mem_concat_exec);
+	}
+	default:
+		diag_set(ClientError, ER_LLVM_IR_COMPILATION, "unsupported expression type");
+		return NULL;
 	}
 }
 
