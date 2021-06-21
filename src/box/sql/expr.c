@@ -2138,8 +2138,8 @@ expr_node_can_be_jitted(struct Walker *walker, struct Expr *expr)
         case TK_INTEGER:
         case TK_FLOAT:
         case TK_STRING:
-        case TK_COLUMN:
-        case TK_AGG_COLUMN:
+        /* case TK_COLUMN_REF: */
+        /* case TK_AGG_COLUMN: */
         case TK_UNKNOWN:
         case TK_NULL:
         case TK_UMINUS:
@@ -4635,10 +4635,10 @@ sqlExprCodeAndCache(Parse * pParse, Expr * pExpr, int target)
  */
 int
 sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
-			ExprList * pList,	/* The expression list to be coded */
-			int target,	/* Where to write results */
-			int srcReg,	/* Source registers if SQL_ECEL_REF */
-			u8 flags	/* SQL_ECEL_* flags */
+		    ExprList * pList,	/* The expression list to be coded */
+		    int target,		/* Where to write results */
+		    int srcReg,		/* Source registers if SQL_ECEL_REF */
+		    u8 flags		/* SQL_ECEL_* flags */
     )
 {
 	struct ExprList_item *pItem;
@@ -4647,11 +4647,11 @@ sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
 	Vdbe *v = pParse->pVdbe;
 	assert(pList != 0);
 	assert(target > 0);
-	assert(pParse->pVdbe != 0);	/* Never gets this far otherwise */
+	assert(pParse->pVdbe != 0);
 	n = pList->nExpr;
 	if (!ConstFactorOk(pParse))
 		flags &= ~SQL_ECEL_FACTOR;
-	if (! pParse->avoid_jit && expr_list_can_be_jitted(pList)) {
+	if (!pParse->avoid_jit && expr_list_can_be_jitted(pList)) {
 		struct jit_compile_context *ctx = parse_get_jit_context(pParse);
 		if (ctx == NULL)
 			return -1;
@@ -4659,10 +4659,16 @@ sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
 			pParse->is_aborted = true;
 			return -1;
 		}
+                bool tuple_req = false;
 		int cursor = pList->a[0].pExpr->iTable;
-		for (int i = 0; i < pList->nExpr; ++i) {
+		for (i = 0; i < pList->nExpr; ++i) {
 			struct Expr *expr = pList->a[i].pExpr;
-			assert(expr->iTable == cursor);
+			if (!tuple_req && expr->op == TK_COLUMN_REF) {
+			        cursor = expr->iTable;
+				tuple_req = true;
+			}
+			assert(!tuple_req || expr->op != TK_COLUMN_REF ||
+			       expr->iTable == cursor);
 			if (jit_emit_expr(ctx, expr, i) != 0) {
 				pParse->is_aborted = true;
 				return -1;
@@ -4673,8 +4679,10 @@ sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
 				pParse->is_aborted = true;
 				return -1;
 			}
-			vdbe_add_jit_op(v, cursor + 1, target, ctx->func_ctx,
-					"JIT for result set epxr list");
+			vdbe_add_jit_op(v, tuple_req ? cursor + 1 : -1, target,
+					ctx->func_ctx, "JIT compiled code for "
+						       "result set expression "
+						       "list");
 			return n;
 		}
 		return 0;

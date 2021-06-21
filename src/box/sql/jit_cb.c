@@ -42,63 +42,35 @@
 int
 jit_mem_binop_exec(struct Mem *lhs, struct Mem *rhs, int op, struct Mem *output)
 {
+	assert(lhs != NULL);
+	assert(rhs != NULL);
 	assert(output != NULL);
-
-	if (lhs->type == MEM_TYPE_NULL || rhs->type == MEM_TYPE_NULL) {
-		output->type = MEM_TYPE_NULL;
-		output->u.i = 0;
-		return 0;
-	}
-
-	if ((lhs->type != MEM_TYPE_INT && lhs->type != MEM_TYPE_DOUBLE) ||
-	    (rhs->type != MEM_TYPE_INT && rhs->type != MEM_TYPE_DOUBLE)) {
-		diag_set(ClientError, ER_JIT_EXECUTION, "attempt at providing "\
-			 "arithmetic operation on non-numeric values");
-		return -1;
-	}
-
-	if (lhs->type == MEM_TYPE_INT && rhs->type == MEM_TYPE_INT) {
-		output->type = MEM_TYPE_INT;
-		switch (op) {
-			case ADD: output->u.i = lhs->u.i + rhs->u.i; break;
-			case SUB: output->u.i = lhs->u.i - rhs->u.i; break;
-			case MUL: output->u.i = lhs->u.i * rhs->u.i; break;
-			case DIV:
-				if (rhs->u.i == 0) {
-					diag_set(ClientError, ER_JIT_EXECUTION,
-						 "division by zero");
-					return -1;
-				}
-				output->u.i = lhs->u.i / rhs->u.i;
-				break;
-			default: unreachable();
-		}
-		return 0;
-	}
-	double f_lhs = lhs->type == MEM_TYPE_DOUBLE ? lhs->u.r : lhs->u.i;
-	double f_rhs = rhs->type == MEM_TYPE_DOUBLE ? rhs->u.r : rhs->u.i;
+	int ret;
 	switch (op) {
-		case ADD: output->u.r = f_lhs + f_rhs; break;
-		case SUB: output->u.r = f_lhs - f_rhs; break;
-		case MUL: output->u.r = f_lhs * f_rhs; break;
-		case DIV:
-			if (f_rhs == (double) 0) {
-				diag_set(ClientError, ER_JIT_EXECUTION,
-					 "division by zero");
-				return -1;
-			}
-			output->u.r = f_lhs / f_rhs;
-			break;
-		default: unreachable();
+	case ADD:
+		ret = mem_add(lhs, rhs, output);
+		break;
+	case SUB:
+		ret = mem_sub(lhs, rhs, output);
+		break;
+	case MUL:
+		ret = mem_mul(lhs, rhs, output);
+		break;
+	case DIV:
+		ret = mem_div(lhs, rhs, output);
+		break;
+	default:
+		unreachable();
 	}
 
-	output->type = MEM_TYPE_DOUBLE;
-	return 0;
+	return ret;
 }
 
 int
 jit_mem_cmp_exec(struct Mem *lhs, struct Mem *rhs, int cmp, struct Mem *output)
 {
+	assert(lhs != NULL);
+	assert(rhs != NULL);
 	assert(output != NULL);
 
 	if (lhs->type == MEM_TYPE_NULL || rhs->type == MEM_TYPE_NULL) {
@@ -128,40 +100,44 @@ jit_mem_predicate_exec(struct Mem *lhs, struct Mem *rhs, int predicate,
 {
 	assert(output != NULL);
 
-	/* 0 == FALSE, 1 == TRUE, 2 == NULL */
-	int v1, v2;
 
-	if (lhs->type == MEM_TYPE_NULL) {
+	int v1;    /* Left operand:  0==FALSE, 1==TRUE, 2==UNKNOWN or NULL */
+	int v2;    /* Right operand: 0==FALSE, 1==TRUE, 2==UNKNOWN or NULL */
+
+	if (mem_is_null(lhs)) {
 		v1 = 2;
-	} else if (lhs->type == MEM_TYPE_INT) {
-		v1 = lhs->u.i != 0;
+	} else if (mem_is_bool(lhs)) {
+		v1 = lhs->u.b;
 	} else {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
-			 mem_str(lhs), "integer");
+			 mem_str(lhs), "boolean");
 		return -1;
 	}
-	if (rhs->type == MEM_TYPE_NULL) {
+	if (mem_is_null(rhs)) {
 		v2 = 2;
-	} else if (rhs->type == MEM_TYPE_INT) {
-		v2 = rhs->u.i != 0;
+	} else if (mem_is_bool(rhs)) {
+		v2 = rhs->u.b;
 	} else {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
-			 mem_str(rhs), "integer");
+			 mem_str(rhs), "boolean");
 		return -1;
 	}
-	static const unsigned char and_table[] = { 0, 0, 0, 0, 1, 2, 0, 2, 2 };
-	static const unsigned char or_table[] = { 0, 1, 2, 1, 1, 1, 2, 1, 2 };
 
-	if (predicate == AND)
-		v1 = and_table[v1 * 3 + v2];
-	if (predicate == OR)
-		v1 = or_table[v1 * 3 + v2];
-	if (v1 == 2) {
-		output->type = MEM_TYPE_NULL;
-	} else {
-		output->u.i = v1;
-		output->type = MEM_TYPE_INT;
+	static const unsigned char and_logic[] = { 0, 0, 0, 0, 1, 2, 0, 2, 2 };
+	static const unsigned char or_logic[] = { 0, 1, 2, 1, 1, 1, 2, 1, 2 };
+	switch (predicate) {
+	case AND:
+		v1 = and_logic[v1*3+v2];
+		break;
+	case OR:
+		v1 = or_logic[v1*3+v2];
+		break;
+	default:
+		unreachable();
 	}
+	mem_set_null(output);
+	if (v1 != 2)
+		mem_set_bool(output, v1);
 	return 0;
 }
 

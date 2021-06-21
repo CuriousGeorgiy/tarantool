@@ -4132,32 +4132,32 @@ case OP_LoadAnalysis: {
  * to port; or evaluating predicate and take a jump.
  **/
 case OP_JitExecuteExpr: {        /* jump */
-	struct VdbeCursor *cursor = p->apCsr[pOp->p1];
+	struct VdbeCursor *cursor = (pOp->p1 >= 0) ? p->apCsr[pOp->p1] : NULL;
 	struct Mem *output = NULL;
 	struct Mem tmp = { .u.i = 1 };
 	switch (pOp->p5) {
-		case COMPILE_EXPR_RS:
-			output = vdbe_prepare_null_out(p, pOp->p2);
-			break;
-		case COMPILE_EXPR_WHERE_COND:
-			output = &tmp;
-			break;
-		case COMPILE_EXPR_AGG:
-			output = vdbe_prepare_null_out(p, pOp->p2);
-			output->flags = 0;
-			pOp->p5 = COMPILE_EXPR_AGG_STEP;
-			break;
-		case COMPILE_EXPR_AGG_STEP:
-			output = &aMem[pOp->p2];
-			break;
-		default: unreachable();
+	case COMPILE_EXPR_RS:
+		output = vdbe_prepare_null_out(p, pOp->p2);
+		break;
+	case COMPILE_EXPR_WHERE_COND:
+		output = &tmp;
+		break;
+	case COMPILE_EXPR_AGG:
+		output = vdbe_prepare_null_out(p, pOp->p2);
+		output->flags = 0;
+		pOp->p5 = COMPILE_EXPR_AGG_STEP;
+		break;
+	case COMPILE_EXPR_AGG_STEP:
+		output = &aMem[pOp->p2];
+		break;
+	default: unreachable();
 	}
-	if (jit_execute(p->jit_context, cursor->uc.pCursor->last_tuple,
+	if (jit_execute(p->jit_context, (cursor != NULL) ? cursor->uc.pCursor->last_tuple : NULL,
 			pOp->p4.z, output) != 0) {
 		goto abort_due_to_error;
 	}
 	if (pOp->p5 == COMPILE_EXPR_WHERE_COND) {
-		if (! output->u.b)
+		if (!output->u.b)
 			goto jump_to_p2;
 	}
 	break;
