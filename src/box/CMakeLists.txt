@@ -74,8 +74,8 @@ set(sql_sources
 
 find_package(LLVM REQUIRED CONFIG)
 llvm_map_components_to_libnames(llvm_libs core mcjit ipo orcjit executionengine interpreter mc AllTargetsAsmParsers support nativecodegen)
-separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND ${LLVM_DEFINITIONS})
-add_definitions(${LLVM_DEFINITIONS_LIST})
+separate_arguments(llvm_definitions_list UNIX_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${llvm_definitions_list})
 include_directories(/usr/include/llvm-10)
 include_directories(/usr/include/llvm-c-10)
 
@@ -240,11 +240,12 @@ include_directories(${SQL_SRC_DIR})
 include_directories(${SQL_BIN_DIR})
 
 add_custom_target(generate_sql_files DEPENDS
-    sql/parse.h
-    sql/keywordhash.h
-    sql/parse.y
-    sql/parse.c
-    sql/opcodes.c)
+    ${SQL_BIN_DIR}/parse.h
+    ${SQL_BIN_DIR}/keywordhash.h
+    ${SQL_BIN_DIR}/parse.c
+    ${SQL_BIN_DIR}/parse.h
+    ${SQL_BIN_DIR}/opcodes.c
+    ${SQL_BIN_DIR}/opcodes.h)
 
 add_custom_command(OUTPUT ${SQL_BIN_DIR}/keywordhash.h
     COMMAND ${EXT_BIN_DIR}/mkkeywordhash > keywordhash.h.tmp
@@ -274,16 +275,20 @@ add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.c
 
 set(jit_types_module)
 bin_source(jit_types_module sql/jit_types.bc sql/jit_types.h)
-add_custom_target(generate_jit_types DEPENDS
-        ${jit_types_module})
+add_custom_target(generate_jit_types DEPENDS ${jit_types_module})
 
 get_property(include_dirs_for_jit_types_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-foreach(dir ${include_dirs_for_jit_types_compilation})
-    string(APPEND jit_types_includes_compiler_string "-I${dir};")
+foreach(include_dir ${include_dirs_for_jit_types_compilation})
+    string(APPEND jit_types_includes_compiler_string "-I${include_dir};")
+endforeach()
+
+get_property(compile_defs_for_jit_types_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE_DEFINITIONS)
+foreach(compile_def ${compile_defs_for_jit_types_compilation})
+    string(APPEND compile_defs_for_jit_types_compilation_string "-D${compile_def};")
 endforeach()
 
 add_custom_command(OUTPUT ${SQL_SRC_DIR}/jit_types.bc
-        COMMAND clang-10 ${jit_types_includes_compiler_string} -flto -o jit_types.bc -c jit_types.c
+        COMMAND clang-10 ${compile_defs_for_jit_types_compilation_string} ${jit_types_includes_compiler_string} -flto -o jit_types.bc -c jit_types.c
         WORKING_DIRECTORY ${SQL_SRC_DIR}
         DEPENDS ${SQL_BIN_DIR}/parse.h)
 
