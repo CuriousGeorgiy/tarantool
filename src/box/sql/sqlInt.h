@@ -1071,9 +1071,6 @@ struct LookasideSlot {
 	LookasideSlot *pNext;	/* Next buffer in the list of free buffers */
 };
 
-int
-llvm_init();
-
 /*
  * Each database connection is an instance of the following structure.
  */
@@ -1115,7 +1112,7 @@ struct sql {
 	Lookaside lookaside;	/* Lookaside malloc configuration */
 	Hash aFunc;		/* Hash table of connection functions */
 
-	bool vdbe_jit_init; /* True if LLVM JIT has been already initialized. */
+	bool llvm_session_init; /* True if LLVMJIT has already been initialized. */
 };
 
 /*
@@ -2208,7 +2205,7 @@ struct Parse {
 	uint32_t autoinc_fieldno;
 	bool initiateTTrans;	/* Initiate Tarantool transaction */
 	bool avoid_jit;
-	struct jit_compile_context *jit_context;
+	struct llvm_jit_ctx *llvm_jit_ctx;
 	/** If set - do not emit byte code at all, just parse.  */
 	bool parse_only;
 	/** Type of parsed_ast member. */
@@ -2617,8 +2614,8 @@ sql_normalized_name_region_new(struct region *r, const char *name, int len);
 int sqlKeywordCode(const unsigned char *, int);
 int sqlRunParser(Parse *, const char *);
 
-struct jit_compile_context *
-parse_get_jit_context(struct Parse *parse);
+struct llvm_jit_ctx *
+parse_get_jit_ctx(Parse *parse_ctx);
 
 /**
  * This routine is called after a single SQL statement has been
@@ -3114,6 +3111,7 @@ void sqlExprCodeMove(Parse *, int, int, int);
 void sqlExprCacheStore(Parse *, int, int, int);
 void sqlExprCachePush(Parse *);
 void sqlExprCachePop(Parse *);
+void sqlExprCachePinRegister(Parse *, int);
 void sqlExprCacheRemove(Parse *, int, int);
 void sqlExprCacheClear(Parse *);
 void sql_expr_type_cache_change(Parse *, int, int);
@@ -3195,10 +3193,10 @@ void sqlSavepoint(Parse *, int, Token *);
 void sqlCloseSavepoints(Vdbe *);
 
 bool
-expr_can_be_jitted(struct Expr *expr);
+expr_can_be_jit_compiled(Expr *expr);
 
 bool
-expr_list_can_be_jitted(struct ExprList *expr_list);
+expr_list_can_be_jit_compiled(ExprList *list);
 
 int sqlExprIsConstant(Expr *);
 int sqlExprIsConstantNotJoin(Expr *);

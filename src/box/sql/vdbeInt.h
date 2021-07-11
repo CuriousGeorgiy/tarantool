@@ -308,12 +308,11 @@ struct Vdbe {
 	/* Anonymous savepoint for aborts only */
 	struct txn_savepoint *anonymous_savepoint;
 	/**
-	 * If option is enabled, then part of VDBE byte-code may
-	 * be converted into LLVM bit-code and executed using
-	 * JIT facilities.
+	 * If option is enabled, then part of VDBE byte-code may be converted
+	 * into LLVM bit-code and executed using JIT facilities.
 	 */
-	bool jit_on;
-	struct jit_execute_context *jit_context;
+	bool llvm_jit_enabled;
+	struct llvm_jit_ctx *llvm_jit_ctx;
 	/**
 	 * Port may be used only during execution of JITted code
 	 * to avoid stopping VDBE to invoke sql_row_to_port().

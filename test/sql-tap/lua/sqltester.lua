@@ -425,6 +425,7 @@ box.cfg{
     memtx_max_tuple_size=4996109;
     vinyl_max_tuple_size=4996109;
     log="tarantool.log";
+    sql_jit_is_enabled=true;
 }
 
 local engine = test_run and test_run:get_cfg('engine') or 'memtx'

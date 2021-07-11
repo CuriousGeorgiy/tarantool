@@ -21,7 +21,7 @@ lua_source(lua_sources lua/xlog.lua)
 lua_source(lua_sources lua/key_def.lua)
 lua_source(lua_sources lua/merger.lua)
 set(bin_sources)
-bin_source(bin_sources bootstrap.snap bootstrap.h)
+bin_source(bin_sources ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap.snap ${CMAKE_CURRENT_BINARY_DIR}/bootstrap.h)
 
 set(sql_sources
     sql/opcodes.c
@@ -39,7 +39,7 @@ set(sql_sources
     sql/global.c
     sql/hash.c
     sql/insert.c
-    sql/jit_cb.c
+    sql/llvm_jit.c
     sql/legacy.c
     sql/main.c
     sql/malloc.c
@@ -60,7 +60,6 @@ set(sql_sources
     sql/update.c
     sql/util.c
     sql/vdbe.c
-    sql/vdbe_jit.c
     sql/vdbeapi.c
     sql/vdbeaux.c
     sql/vdbemem.c
@@ -73,11 +72,10 @@ set(sql_sources
 )
 
 find_package(LLVM REQUIRED CONFIG)
-llvm_map_components_to_libnames(llvm_libs core mcjit ipo orcjit executionengine interpreter mc AllTargetsAsmParsers support nativecodegen)
-separate_arguments(llvm_definitions_list UNIX_COMMAND ${LLVM_DEFINITIONS})
+include_directories(${LLVM_INCLUDE_DIR})
+separate_arguments(llvm_definitions_list NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${llvm_definitions_list})
-include_directories(/usr/include/llvm-10)
-include_directories(/usr/include/llvm-c-10)
+llvm_map_components_to_libnames(llvm_libs core native orcjit)
 
 add_custom_target(box_generate_lua_sources
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/src/box
@@ -273,26 +271,28 @@ add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.c
     DEPENDS ${SQL_SRC_DIR}/vdbe.c ${EXT_SRC_DIR}/mkopcodec.sh ${SQL_BIN_DIR}/parse.h
         ${SQL_BIN_DIR}/opcodes.h)
 
-set(jit_types_module)
-bin_source(jit_types_module sql/jit_types.bc sql/jit_types.h)
-add_custom_target(generate_jit_types DEPENDS ${jit_types_module})
+set(jit_lib_module)
+bin_source(jit_lib_module ${SQL_BIN_DIR}/llvm_jit_lib.bc ${SQL_BIN_DIR}/llvm_jit_lib.h)
+add_custom_target(generate_jit_lib DEPENDS ${jit_lib_module})
 
-get_property(include_dirs_for_jit_types_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-foreach(include_dir ${include_dirs_for_jit_types_compilation})
-    string(APPEND jit_types_includes_compiler_string "-I${include_dir};")
+get_property(include_dirs_for_jit_lib_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach(include_dir ${include_dirs_for_jit_lib_compilation})
+    string(APPEND jit_lib_includes_compiler_string "-I${include_dir};")
 endforeach()
 
-get_property(compile_defs_for_jit_types_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE_DEFINITIONS)
-foreach(compile_def ${compile_defs_for_jit_types_compilation})
-    string(APPEND compile_defs_for_jit_types_compilation_string "-D${compile_def};")
+get_property(compile_defs_for_jit_lib_compilation DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE_DEFINITIONS)
+foreach(compile_def ${compile_defs_for_jit_lib_compilation})
+    string(APPEND compile_defs_for_jit_lib_compilation_string "-D${compile_def};")
 endforeach()
 
-add_custom_command(OUTPUT ${SQL_SRC_DIR}/jit_types.bc
-        COMMAND clang-10 ${compile_defs_for_jit_types_compilation_string} ${jit_types_includes_compiler_string} -flto -o jit_types.bc -c jit_types.c
-        WORKING_DIRECTORY ${SQL_SRC_DIR}
-        DEPENDS ${SQL_BIN_DIR}/parse.h)
+add_custom_command(OUTPUT ${SQL_BIN_DIR}/llvm_jit_lib.bc
+        COMMAND clang-12 ${compile_defs_for_jit_lib_compilation_string} ${jit_lib_includes_compiler_string} -Ofast -flto -emit-llvm -o llvm_jit_lib.bc -c ${SQL_SRC_DIR}/llvm_jit_lib.c
+        COMMAND opt -O3 --aa-eval --basic-aa --basiccg --scev-aa --domfrontier --domtree --globals-aa --intervals --iv-users --lazy-value-info --da --loops --memdep --postdomtree --regions --scalar-evolution --scev-aa --target-abi --polly --polly-2nd-level-tiling --polly-parallel --polly-pattern-matching-based-opts --polly-process-unprofitable --polly-register-tiling --always-inline --inline --partial-inliner --globaldce --dce --adce --argpromotion --load-store-vectorizer --loop-vectorize --break-crit-edges --codegenprepare --constmerge --deadargelim --dse --function-attrs --globalopt --gvn --indvars --instcombine --aggressive-instcombine --ipsccp --jump-threading --lcssa --licm --loop-deletion --loop-reduce --loop-rotate --loop-simplify --loop-unroll --loop-unswitch --loweratomic --lowerinvoke --lowerswitch --mem2reg --memcpyopt --mergefunc --mergereturn --prune-eh --reassociate --reg2mem --scalarizer --sccp --simplify-mir --simplifycfg --sink --argpromotion --tailcallelim --slp-vectorizer -strip-debug -o llvm_jit_lib.bc llvm_jit_lib.bc
+        COMMAND llvm-link -S -o llvm_jit_lib.ll llvm_jit_lib.bc
+        WORKING_DIRECTORY ${SQL_BIN_DIR}
+        DEPENDS sql/sqlInt.h sql/vdbeInt.h sql/vdbe.h sql/mem.h sql/llvm_jit_lib.c)
 
 target_link_libraries(box box_error tuple stat xrow xlog vclock crc32 scramble
                       raft ${common_libraries} ${llvm_libs})
 
-add_dependencies(box build_bundled_libs generate_sql_files generate_jit_types)
+add_dependencies(box build_bundled_libs generate_sql_files generate_jit_lib)

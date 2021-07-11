@@ -38,7 +38,6 @@
 #include "tarantoolInt.h"
 #include "box/space.h"
 #include "box/session.h"
-#include "vdbe_jit.h"
 
 int
 sql_stmt_compile(const char *zSql, int nBytes, struct Vdbe *pReprepare,
@@ -213,13 +212,9 @@ sql_parser_destroy(Parse *parser)
 	sql *db = parser->db;
 	sqlDbFree(db, parser->aLabel);
 	sql_expr_list_delete(db, parser->pConstExpr);
-
 	struct create_fk_constraint_parse_def *create_fk_constraint_parse_def =
 		&parser->create_fk_constraint_parse_def;
 	create_fk_constraint_parse_def_destroy(create_fk_constraint_parse_def);
-
-	jit_compile_context_release(parser->jit_context);
-
 	if (db != NULL) {
 		assert(db->lookaside.bDisable >=
 		       parser->disableLookaside);

@@ -323,7 +323,7 @@ sql_set_port(struct sql_stmt *stmt, struct port *port)
 {
 	assert(port != NULL);
 	struct Vdbe *v = (struct Vdbe *) stmt;
-	if (v->jit_on)
+	if (v->llvm_jit_enabled)
 		v->port = port;
 }
 

@@ -277,8 +277,8 @@ struct errcode_record {
 	/*222 */_(ER_QUORUM_WAIT,		"Couldn't wait for quorum %d: %s") \
 	/*223 */_(ER_INTERFERING_PROMOTE,	"Instance with replica id %u was promoted first") \
 	/*224 */_(ER_RAFT_DISABLED,		"Elections were turned off while running box.ctl.promote()")\
-	/*225 */_(ER_JIT_EXECUTION,		"LLVM JIT execution failed: %s") \
-	/*226 */_(ER_LLVM_IR_COMPILATION,	"Failed to compile LLVM bitcode: %s") \
+	/*225 */_(ER_JIT_EXECUTION,		"LLVM JIT compiled machine code execution failed: %s") \
+	/*226 */_(ER_LLVM_IR_COMPILATION,	"Failed to compile LLVM IR: %s") \
 
 /*
  * !IMPORTANT! Please follow instructions at start of the file

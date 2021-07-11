@@ -39,11 +39,11 @@
 #include "box/schema.h"
 #include "box/tuple_format.h"
 #include "box/txn.h"
+#include "llvm_jit.h"
 #include "msgpuck/msgpuck.h"
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
-#include "vdbe_jit.h"
 #include "tarantoolInt.h"
 #include "box/execute.h"
 
@@ -65,20 +65,12 @@ sqlVdbeCreate(Parse * pParse)
 	if (db->pVdbe) {
 		db->pVdbe->pPrev = p;
 	}
-
 	p->pNext = db->pVdbe;
 	p->pPrev = 0;
 	db->pVdbe = p;
 	p->magic = VDBE_MAGIC_INIT;
 	p->pParse = pParse;
 	p->schema_ver = box_schema_version();
-	if (p->jit_on) {
-		p->jit_context = calloc(1, sizeof(*p->jit_context));
-		if (p->jit_context == NULL) {
-			sqlDbFree(pParse->db, p);
-			return NULL;
-		}
-	}
 	assert(pParse->aLabel == 0);
 	assert(pParse->nLabel == 0);
 	assert(pParse->nOpAlloc == 0);
@@ -92,12 +84,6 @@ sql_vdbe_prepare(struct Vdbe *vdbe)
 	assert(vdbe != NULL);
 	struct txn *txn = in_txn();
 	vdbe->auto_commit = txn == NULL;
-
-	if (vdbe->jit_on && vdbe->jit_context->jit_impl == LLVM_JIT_MC) {
-		return jit_mc_engine_prepare(vdbe->jit_context,
-					     &vdbe->jit_context->engine);
-	}
-
 	return 0;
 }
 
@@ -377,19 +363,6 @@ sqlVdbeAddOp4Int(Vdbe * p,	/* Add the opcode to this VM */
 		pOp->p4.i = p4;
 	}
 	return addr;
-}
-
-void
-vdbe_add_jit_op(struct Vdbe *v, int cursor, int res,
-		struct jit_func_context *func, char *comment)
-{
-	assert(func->name != NULL);
-	sqlVdbeAddOp4(v, OP_JitExecuteExpr, cursor, res, 0, func->name,
-		      P4_STATIC);
-	sqlVdbeChangeP5(v, func->strategy);
-	if (comment != NULL)
-		VdbeComment((v, comment));
-	v->jit_on = true;
 }
 
 /* Insert the end of a co-routine
@@ -1621,17 +1594,10 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 		}
 		memset(p->apCsr, 0, nCursor * sizeof(VdbeCursor *));
 	}
-	if (p->jit_on) {
-		assert(pParse->jit_context != NULL);
-		p->jit_context = calloc(1, sizeof(*p->jit_context));
-		if (p->jit_context == NULL) {
-			diag_set(OutOfMemory, sizeof(*p->jit_context), "calloc",
-				 "jit_context");
-			pParse->is_aborted = true;
-			return;
-		}
-		p->jit_context->module = pParse->jit_context->module;
-		assert(p->jit_context->module != NULL);
+	if (p->llvm_jit_enabled) {
+		assert(pParse->llvm_jit_ctx != NULL);
+		p->llvm_jit_ctx = pParse->llvm_jit_ctx;
+		pParse->llvm_jit_ctx = NULL;
 	}
 	sqlVdbeRewind(p);
 }
@@ -2264,19 +2230,17 @@ sqlVdbeDelete(Vdbe * p)
 	p->magic = VDBE_MAGIC_DEAD;
 	p->db = 0;
 	free(p->var_pos);
+	if (p->llvm_jit_enabled) {
+		assert(p->llvm_jit_ctx);
+		llvm_jit_ctx_delete(p->llvm_jit_ctx);
+		p->llvm_jit_ctx = NULL;
+	}
 	/*
 	 * VDBE is responsible for releasing region after txn
 	 * was commited.
 	 */
 	if (in_txn() == NULL)
 		fiber_gc();
-	if (p->jit_on) {
-		if (p->jit_context->jit_impl == LLVM_JIT_MC) {
-			(void) jit_mc_engine_finalize(p->jit_context,
-						      p->jit_context->engine);
-		}
-		jit_execute_context_release(p->jit_context);
-	}
 	sqlDbFree(db, p);
 }
 

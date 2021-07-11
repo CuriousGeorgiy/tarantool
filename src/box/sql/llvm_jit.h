@@ -1,7 +1,7 @@
-#ifndef TARANTOOL_SQL_JIT_TYPES_H_INCLUDED
-#define TARANTOOL_SQL_JIT_TYPES_H_INCLUDED
+#pragma once
+
 /*
- * Copyright 2010-2019, Tarantool AUTHORS, please see AUTHORS file.
+ * Copyright 2019-2021, Tarantool AUTHORS, please see AUTHORS file.
  *
  * Redistribution and use in source and binary forms, with or
  * without modification, are permitted provided that the following
@@ -32,33 +32,51 @@
  */
 
 #include "sqlInt.h"
-#include "mem.h"
-#include "vdbe_jit.h"
-#include "box/tuple.h"
-#include "box/port.h"
 
-/**
- * This source file is never linked, it's only purpose is
- * to generate bit-code containing all */
+#include "box/session.h"
 
-struct Mem t_mem;
-struct tuple t_tuple;
-struct iterator t_iterator;
-struct port t_port;
-
-void *referenced_functions[] =
-{
-	memcpy,
-	jit_tuple_field_fetch,
-	jit_mem_binop_exec,
-	jit_mem_cmp_exec,
-	jit_mem_predicate_exec,
-	jit_mem_concat_exec,
-	jit_mem_to_port,
-	jit_debug_print,
-	jit_agg_max_exec,
-	jit_agg_count_exec,
-	jit_agg_sum_exec
+/** Minimal expression list item height to consider using JIT compilation. */
+enum {
+	JIT_MIN_TOTAL_EXPR_LIST_HEIGHT = 1
 };
 
-#endif /* TARANTOOL_SQL_JIT_TYPES_H_INCLUDED */
+/** Minimal tuple count to consider using JIT compilation. */
+enum {
+	JIT_MIN_TUPLE_CNT = 1
+};
+
+bool
+llvm_session_init(void);
+
+static inline bool
+llvm_jit_enabled(void)
+{
+	if (!sql_get()->llvm_session_init)
+		return false;
+	if ((current_session()->sql_flags & SQL_VdbeJIT) == 0)
+		return false;
+	return true;
+}
+
+void
+llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs);
+
+bool
+llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx);
+
+bool
+llvm_build_expr_list_item(struct llvm_jit_ctx *jit_ctx,
+			  struct ExprList_item *item, int expr_idx,
+			  int flags);
+
+bool
+llvm_exec_compiled_expr_list(struct llvm_jit_ctx *ctx, int fn_id, Vdbe *vdbe);
+
+void
+llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
+
+int
+llvm_jit_get_fn_under_construction_id(struct llvm_jit_ctx *ctx);
+
+bool
+llvm_jit_verify(struct llvm_jit_ctx *jit_ctx);

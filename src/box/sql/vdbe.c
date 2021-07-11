@@ -46,10 +46,10 @@
 #include "box/tuple.h"
 #include "box/port.h"
 #include "sqlInt.h"
+#include "llvm_jit.h"
 #include "mem.h"
 #include "vdbeInt.h"
 #include "tarantoolInt.h"
-#include "vdbe_jit.h"
 
 #include "msgpuck/msgpuck.h"
 #include "mpstream/mpstream.h"
@@ -132,7 +132,7 @@ int sql_sort_count = 0;
  */
 #ifdef SQL_TEST
 int sql_max_blobsize = 0;
-static void
+void
 updateMaxBlobsize(Mem *p)
 {
 	if (mem_is_bytes(p) && p->n > sql_max_blobsize)
@@ -395,7 +395,7 @@ vdbe_field_ref_fetch_data(struct vdbe_field_ref *field_ref, uint32_t fieldno)
  * @retval 0 Status code in case of success.
  * @retval sql_ret_code Error code otherwise.
  */
-static int
+int
 vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 		     struct Mem *dest_mem)
 {
@@ -4120,48 +4120,15 @@ case OP_LoadAnalysis: {
 	break;
 }
 
-/**
- * Opcode: JitExecuteExpr P1 P2 * * P5
+/* Opcode: ExecJITCompiledExprList P1
  *
- * P1 is a cursor containing tuple to provide fields.
- * P2 contains * range of * memory cells where result of
- * execution will be saved.
- *
- * P5 defines pattern of jitted function: whether it's expr
- * execution with saving result in output memory; dump result
- * to port; or evaluating predicate and take a jump.
- **/
-case OP_JitExecuteExpr: {        /* jump */
-	struct VdbeCursor *cursor = (pOp->p1 >= 0) ? p->apCsr[pOp->p1] : NULL;
-	struct Mem *output = NULL;
-	struct Mem tmp = { .u.i = 1 };
-	switch (pOp->p5) {
-	case COMPILE_EXPR_RS:
-		output = vdbe_prepare_null_out(p, pOp->p2);
-		break;
-	case COMPILE_EXPR_WHERE_COND:
-		output = &tmp;
-		break;
-	case COMPILE_EXPR_AGG:
-		output = vdbe_prepare_null_out(p, pOp->p2);
-		output->flags = 0;
-		pOp->p5 = COMPILE_EXPR_AGG_STEP;
-		break;
-	case COMPILE_EXPR_AGG_STEP:
-		output = &aMem[pOp->p2];
-		break;
-	default: unreachable();
-	}
-	if (jit_execute(p->jit_context, (cursor != NULL) ? cursor->uc.pCursor->last_tuple : NULL,
-			pOp->p4.z, output) != 0) {
+ * P1 contains the JIT compiled function id.
+ */
+case OP_ExecJITCompiledExprList:
+	assert(pOp->p1 >= 0);
+	if (!llvm_exec_compiled_expr_list(p->llvm_jit_ctx, pOp->p1, p))
 		goto abort_due_to_error;
-	}
-	if (pOp->p5 == COMPILE_EXPR_WHERE_COND) {
-		if (!output->u.b)
-			goto jump_to_p2;
-	}
 	break;
-}
 
 /* Opcode: Program P1 P2 P3 P4 P5
  *

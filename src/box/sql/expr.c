@@ -37,10 +37,11 @@
 #include "coll/coll.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
+#include "vdbeInt.h"
 #include "box/schema.h"
 #include "box/session.h"
 
-#include "vdbe_jit.h"
+#include "llvm_jit.h"
 
 /* Forward declarations */
 static void exprCodeBetween(Parse *, Expr *, int,
@@ -2113,81 +2114,85 @@ exprIsConst(Expr * p, int initFlag, int iCur)
 	return w.eCode;
 }
 
-/**
- * In current implementation only constant expressions containing
- * integer literals and binary operations can be jitted.
- */
 static int
-expr_node_can_be_jitted(struct Walker *walker, struct Expr *expr)
+expr_node_can_be_jit_compiled(Walker *walker, Expr *expr)
 {
 	switch (expr->op) {
-        case TK_PLUS:
-        case TK_MINUS:
-        case TK_STAR:
-        case TK_SLASH:
-        case TK_AND:
-        case TK_OR:
-        case TK_LE:
-        case TK_LT:
-        case TK_GE:
-        case TK_GT:
-        case TK_NE:
-        case TK_EQ:
-        case TK_TRUE:
-        case TK_FALSE:
-        case TK_INTEGER:
-        case TK_FLOAT:
-        case TK_STRING:
-        /* case TK_COLUMN_REF: */
-        /* case TK_AGG_COLUMN: */
-        case TK_UNKNOWN:
-        case TK_NULL:
-        case TK_UMINUS:
-        case TK_CONCAT:
-            return WRC_Continue;
-        default:
-            walker->eCode = 0;
-            return WRC_Abort;
+#if 0
+	case TK_COLUMN_REF:
+#endif
+	case TK_INTEGER:
+	case TK_TRUE:
+	case TK_FALSE:
+	case TK_FLOAT:
+	case TK_STRING:
+	case TK_NULL:
+	case TK_UPLUS:
+#if 0
+	case TK_UMINUS:
+	case TK_PLUS:
+	case TK_MINUS:
+	case TK_STAR:
+	case TK_SLASH:
+	case TK_AND:
+	case TK_OR:
+	case TK_LE:
+	case TK_LT:
+	case TK_GE:
+	case TK_GT:
+	case TK_NE:
+	case TK_EQ:
+        case TK_AGG_COLUMN:
+	case TK_CONCAT:
+#endif
+		return WRC_Continue;
+	default:
+		walker->eCode = 0;
+		return WRC_Abort;
 	}
 }
 
 bool
-expr_can_be_jitted(struct Expr *expr)
+expr_can_be_jit_compiled(Expr *expr)
 {
+	assert(expr);
+
 	Walker w;
-	memset(&w, 0, sizeof(w));
+
+	memset(&w, 0, sizeof(Walker));
 	w.eCode = 1;
-	w.xExprCallback = expr_node_can_be_jitted;
-	/* If expr contains sub-select - JIT is unavailable. */
+	w.xExprCallback = expr_node_can_be_jit_compiled;
+	/* If expression contains a non-constant sub-select - JIT is unavailable. */
 	w.xSelectCallback = selectNodeIsConstant;
 	sqlWalkExpr(&w, expr);
 	return w.eCode;
 }
 
 bool
-expr_list_can_be_jitted(struct ExprList *expr_list)
+expr_list_can_be_jit_compiled(ExprList *list)
 {
-	if (! jit_is_enabled())
+	assert(list);
+
+	uint32_t totalHeight;
+	int i;
+	struct ExprList_item *item;
+
+	if (!llvm_jit_enabled())
 		return false;
-	int space_cursor = expr_list->a[0].pExpr->iTable;
-	uint32_t total_height = 0;
-	for (int i = 0; i < expr_list->nExpr; ++i) {
-		struct Expr *expr = expr_list->a[i].pExpr;
-		if (! expr_can_be_jitted(expr))
+	totalHeight = 0;
+	for (i = 0, item = list->a; i < list->nExpr; ++i, ++item) {
+		assert(item);
+
+		Expr *expr;
+
+		expr = item->pExpr;
+		assert(expr);
+		if (!expr_can_be_jit_compiled(expr))
 			return false;
-		if (space_cursor != expr->iTable)
-			return false;
-		total_height += expr->nHeight;
+		totalHeight += expr->nHeight;
 	}
-	if (total_height < JIT_MIN_TOTAL_EXPR_HEIGHT)
+	if (totalHeight < JIT_MIN_TOTAL_EXPR_LIST_HEIGHT)
 		return false;
-//	struct space *space = space_by_id(expr_list->a[0].pExpr->space_def->id);
-//	if (space != NULL) {
-//		struct index *pk = space->index[0];
-//		if (pk != NULL &&
-//		    pk->vtab->count(pk, ITER_ALL, NULL, 0) < JIT_MIN_TUPLE_COUNT)
-//			return false;
-//	}
 	return true;
 }
 
@@ -3576,7 +3581,7 @@ sqlExprCachePop(Parse * pParse)
  * register might be in the cache in multiple places, so be sure to
  * get them all.
  */
-static void
+void
 sqlExprCachePinRegister(Parse * pParse, int iReg)
 {
 	int i;
@@ -4634,94 +4639,121 @@ sqlExprCodeAndCache(Parse * pParse, Expr * pExpr, int target)
  * in registers at srcReg, and so the value can be copied from there.
  */
 int
-sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
-		    ExprList * pList,	/* The expression list to be coded */
-		    int target,		/* Where to write results */
-		    int srcReg,		/* Source registers if SQL_ECEL_REF */
-		    u8 flags		/* SQL_ECEL_* flags */
-    )
+sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
+		    ExprList *list,	/* The expression list coded */
+		    int tgt_regs_idx,	/* Where to write results */
+		    int src_regs,	/* Source registers if SQL_ECEL_REF */
+		    u8 flags)		/* SQL_ECEL_* flags */
 {
-	struct ExprList_item *pItem;
-	int i, j, n;
-	u8 copyOp = (flags & SQL_ECEL_DUP) ? OP_Copy : OP_SCopy;
-	Vdbe *v = pParse->pVdbe;
-	assert(pList != 0);
-	assert(target > 0);
-	assert(pParse->pVdbe != 0);
-	n = pList->nExpr;
-	if (!ConstFactorOk(pParse))
-		flags &= ~SQL_ECEL_FACTOR;
-	if (!pParse->avoid_jit && expr_list_can_be_jitted(pList)) {
-		struct jit_compile_context *ctx = parse_get_jit_context(pParse);
-		if (ctx == NULL)
-			return -1;
-		if (jit_expr_emit_start(ctx, n) != 0) {
-			pParse->is_aborted = true;
-			return -1;
-		}
-                bool tuple_req = false;
-		int cursor = pList->a[0].pExpr->iTable;
-		for (i = 0; i < pList->nExpr; ++i) {
-			struct Expr *expr = pList->a[i].pExpr;
-			if (!tuple_req && expr->op == TK_COLUMN_REF) {
-			        cursor = expr->iTable;
-				tuple_req = true;
-			}
-			assert(!tuple_req || expr->op != TK_COLUMN_REF ||
-			       expr->iTable == cursor);
-			if (jit_emit_expr(ctx, expr, i) != 0) {
-				pParse->is_aborted = true;
-				return -1;
-			}
-		}
-		if (ctx->func_ctx->strategy != COMPILE_EXPR_AGG) {
-			if (jit_expr_emit_finish(ctx) != 0) {
-				pParse->is_aborted = true;
-				return -1;
-			}
-			vdbe_add_jit_op(v, tuple_req ? cursor + 1 : -1, target,
-					ctx->func_ctx, "JIT compiled code for "
-						       "result set expression "
-						       "list");
-			return n;
-		}
-		return 0;
-	}
+	assert(parse_ctx != NULL);
+	assert(list != NULL);
+	assert(tgt_regs_idx > 0);
+	assert(src_regs >= 0);
 
-	for (pItem = pList->a, i = 0; i < n; i++, pItem++) {
-		Expr *pExpr = pItem->pExpr;
-		if ((flags & SQL_ECEL_REF) != 0
-		    && (j = pItem->u.x.iOrderByCol) > 0) {
-			if (flags & SQL_ECEL_OMITREF) {
-				i--;
-				n--;
+	int i;
+	struct ExprList_item *item;
+	int expr_cnt;
+	u8 copy_op;
+	Vdbe *vdbe;
+
+	expr_cnt = list->nExpr;
+	copy_op = (flags & SQL_ECEL_DUP) ? OP_Copy : OP_SCopy;
+	vdbe = parse_ctx->pVdbe;
+	if (!ConstFactorOk(parse_ctx))
+		flags &= ~SQL_ECEL_FACTOR;
+	if (!parse_ctx->avoid_jit && expr_list_can_be_jit_compiled(list)) {
+		struct llvm_jit_ctx *jit_ctx;
+		int fn_id;
+
+		jit_ctx = parse_get_jit_ctx(parse_ctx);
+		if (!jit_ctx) {
+			parse_ctx->is_aborted = true;
+			return -1;
+		}
+		llvm_build_expr_list_init(parse_ctx, src_regs, tgt_regs_idx);
+		fn_id = llvm_jit_get_fn_under_construction_id(jit_ctx);
+		assert(fn_id >= 0);
+		for (i = 0, item = list->a; i < expr_cnt; ++i, ++item) {
+			assert(item);
+
+			Expr *expr;
+			int j;
+
+			expr = item->pExpr;
+			assert(expr);
+			if ((flags & (SQL_ECEL_REF | SQL_ECEL_OMITREF)) != 0 &&
+			    (j = item->u.x.iOrderByCol) > 0) {
+				--i;
+				--expr_cnt;
+			} else if ((flags & SQL_ECEL_FACTOR) != 0 &&
+				   sqlExprIsConstant(item->pExpr)) {
+				int tgt_reg_idx;
+
+				tgt_reg_idx = tgt_regs_idx + i;
+				sqlExprCodeAtInit(parse_ctx, expr, tgt_reg_idx, 0);
 			} else {
-				sqlVdbeAddOp2(v, copyOp, j + srcReg - 1,
-						  target + i);
+				assert(tgt_regs_idx > 0 &&
+				       tgt_regs_idx <= parse_ctx->nMem);
+				if (vdbe == NULL) {
+					assert(parse_ctx->db->mallocFailed);
+					parse_ctx->is_aborted = true;
+					return -1;
+				}
+				if (!llvm_build_expr_list_item(jit_ctx, item,
+							       i, flags)) {
+					parse_ctx->is_aborted = true;
+					return -1;
+				}
+			}
+		}
+		if (!llvm_build_expr_list_fin(jit_ctx)) {
+			parse_ctx->is_aborted = true;
+			return -1;
+		}
+		sqlVdbeAddOp1(vdbe, OP_ExecJITCompiledExprList, fn_id);
+		VdbeComment((vdbe, "Machine code for pushing result set expression "
+				"list"));
+		vdbe->llvm_jit_enabled = true;
+		return expr_cnt;
+	}
+	for (i = 0, item = list->a; i < expr_cnt; ++i, ++item) {
+		assert(item);
+
+		Expr *expr;
+		int j;
+
+		expr = item->pExpr;
+		assert(expr);
+		if ((flags & SQL_ECEL_REF) != 0
+		    && (j = item->u.x.iOrderByCol) > 0) {
+			if ((flags & SQL_ECEL_OMITREF) != 0) {
+				--i;
+				--expr_cnt;
+			} else {
+				sqlVdbeAddOp2(vdbe, copy_op, j + src_regs - 1,
+					      tgt_regs_idx + i);
 			}
 		} else if ((flags & SQL_ECEL_FACTOR) != 0
-			   && sqlExprIsConstant(pExpr)) {
-			sqlExprCodeAtInit(pParse, pExpr, target + i, 0);
+			   && sqlExprIsConstant(expr)) {
+			sqlExprCodeAtInit(parse_ctx, expr, tgt_regs_idx + i, 0);
 		} else {
-			int inReg =
-			    sqlExprCodeTarget(pParse, pExpr, target + i);
-			if (inReg != target + i) {
-				VdbeOp *pOp;
-				if (copyOp == OP_Copy
-				    && (pOp =
-					sqlVdbeGetOp(v,
-							 -1))->opcode == OP_Copy
-				    && pOp->p1 + pOp->p3 + 1 == inReg
-				    && pOp->p2 + pOp->p3 + 1 == target + i) {
-					pOp->p3++;
+			int reg = sqlExprCodeTarget(parse_ctx, expr, tgt_regs_idx + i);
+			if (reg != tgt_regs_idx + i) {
+				VdbeOp *op;
+
+				op = sqlVdbeGetOp(vdbe, -1);
+				if (copy_op == OP_Copy && op->opcode == OP_Copy &&
+				    op->p1 + op->p3 + 1 == reg &&
+				    op->p2 + op->p3 + 1 == tgt_regs_idx + i) {
+					op->p3++;
 				} else {
-					sqlVdbeAddOp2(v, copyOp, inReg,
-							  target + i);
+					sqlVdbeAddOp2(vdbe, copy_op, reg,
+						      tgt_regs_idx + i);
 				}
 			}
 		}
 	}
-	return n;
+	return expr_cnt;
 }
 
 /*

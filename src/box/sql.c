@@ -34,6 +34,7 @@
 #include "sql.h"
 #include "sql/sqlInt.h"
 #include "sql/tarantoolInt.h"
+#include "sql/llvm_jit.h"
 #include "sql/mem.h"
 #include "sql/vdbeInt.h"
 
@@ -76,7 +77,7 @@ sql_init(void)
 
 	sql_stmt_cache_init();
 
-	if (llvm_init() != 0)
+	if (!llvm_session_init())
 		panic("failed to initialize LLVM JIT subsystem");
 
 	assert(db != NULL);
