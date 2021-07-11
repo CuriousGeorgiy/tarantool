@@ -39,6 +39,7 @@
 #include <unicode/utf8.h>
 #include <unicode/uchar.h>
 
+#include "llvm_jit.h"
 #include "box/session.h"
 #include "box/schema.h"
 #include "say.h"
@@ -540,6 +541,8 @@ sqlRunParser(Parse * pParse, const char *zSql)
 		}
 		pParse->line_pos += pParse->sLastToken.n;
 	}
+	if (pParse->llvm_jit_ctx && !llvm_jit_verify(pParse->llvm_jit_ctx))
+		pParse->is_aborted = true;
 	pParse->zTail = &zSql[i];
 	sqlParserFree(pEngine, sql_free);
 	if (db->mallocFailed)
