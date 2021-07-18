@@ -39,79 +39,22 @@
 
 #include "llvm-c/Analysis.h"
 #include "llvm-c/BitReader.h"
-#include "llvm-c/Core.h"
 #include "llvm-c/LLJIT.h"
-#include "llvm-c/Orc.h"
 #include "llvm-c/OrcEE.h"
 #include "llvm-c/Support.h"
 #include "llvm-c/Target.h"
 
-/**
- * We can compile expressions in different parts of query:
- * expression can be part of result set, where predicate
- * or nested query.
- */
-struct llvm_build_ctx {
-	/** Basic blocks and LLVM IR instructions generation. */
-	int fn_id;
-	LLVMBuilderRef builder;
-	Parse *parse_ctx;
-	int src_regs_idx;
-	int tgt_regs_idx;
-	int sql_str_len_lim;
-	LLVMValueRef llvm_fn;
-	LLVMValueRef llvm_vdbe;
-	LLVMValueRef llvm_regs;		/** VDBE registers. */
-	Expr *expr;
-	LLVMValueRef llvm_tgt_reg;
-	int tgt_reg_idx;
-	LLVMValueRef llvm_tgt_reg_idx;
-};
-
-/**
- * This structure aggregates all required information during
- * compilation to LLVM IR. Only module will survive till
- * execution, all other members will be thrown or released.
- */
-struct llvm_jit_ctx {
-	/** Module under construction. */
-	LLVMModuleRef module;
-	/** Resource tracker of main LLVM JITDyLib. */
-	LLVMOrcResourceTrackerRef rt;
-	bool compiled;
-	/** Context of function under construction. */
-	struct llvm_build_ctx *build_ctx;
-	/** # of functions built — used to generate non-conflicting names. */
-	int cnt;
-	/**
-	 * String length limit — obtained from
-	 * Parse->db->aLimit[SQL_LIMIT_LENGTH].
-	 */
-};
-
+/** Used for callback function name generation. */
 static const char *const fn_name_prefix = "expr_";
 
-/** Global variables to represent types in JIT compiled code. */
+/** Types referenced during construction of LLVM IR. */
 static LLVMTypeRef llvm_vdbe_type;
 static LLVMTypeRef llvm_vdbe_ptr_type;
 static LLVMTypeRef llvm_vdbe_field_ref_type;
 static LLVMTypeRef llvm_mem_type;
 static LLVMTypeRef llvm_mem_ptr_type;
 
-static struct base_type {
-	const char *name;
-	LLVMTypeRef *type;
-	bool is_ptr;
-} base_types[] = {
-	{ "struct.Vdbe", &llvm_vdbe_type, false },
-	{ "struct.Vdbe", &llvm_vdbe_ptr_type, true },
-	{ "struct.Mem", &llvm_mem_type, false },
-	{ "struct.Mem", &llvm_mem_ptr_type, true },
-	{ "struct.vdbe_field_ref", &llvm_vdbe_field_ref_type, false },
-
-};
-
-/** Functions available during execution of JIT'ed code. */
+/** Auxiliary functions referenced during construction of LLVM IR. */
 static LLVMValueRef llvm_mem_copy;
 static LLVMValueRef llvm_mem_set_null;
 static LLVMValueRef llvm_mem_set_int;
@@ -121,96 +64,92 @@ static LLVMValueRef llvm_mem_set_str0_static;
 static LLVMValueRef llvm_vdbe_field_ref_fetch;
 static LLVMValueRef llvm_vdbe_op_col;
 
-static struct base_fn {
-	const char *name;
-	LLVMValueRef *llvm_fn;
-} base_fns[] = {
-	{
-		"mem_copy",
-		&llvm_mem_copy
-	},
-	{
-		"mem_set_null",
-		&llvm_mem_set_null
-	},
-	{
-		"mem_set_int",
-		&llvm_mem_set_int
-	},
-	{
-		"mem_set_bool",
-		&llvm_mem_set_bool
-	},
-	{
-		"mem_set_double",
-		&llvm_mem_set_double
-	},
-	{
-		"mem_set_str0_static",
-		&llvm_mem_set_str0_static
-	},
-	{
-		"vdbe_field_ref_fetch",
-		&llvm_vdbe_field_ref_fetch
-	},
-	{
-		"vdbe_op_col",
-		&llvm_vdbe_op_col
-	}
-};
-
+/** LLVM Orc thread safe context required for creating thread safe modules. */
 static LLVMOrcThreadSafeContextRef llvm_ts_ctx;
-static LLVMOrcLLJITRef llvm_lljit;
+/* FIXME: should be disposed sometime? */
 
-/** Module containing type declarations and built-in functions implementation. */
+/** LLVM Orc LLJIT instance. */
+static LLVMOrcLLJITRef llvm_lljit;
+/* FIXME: should be disposed sometime? */
+
+/**
+ * Module containing type definitions and auxiliary functions implementation.
+ * Other modules are cloned from it in order to contain the implementation of
+ * all auxiliary functions so that they can be inlined.
+ */
 static LLVMModuleRef llvm_base_mod;
 
+/**
+ * Create the base module from an embedded LLVM bitcode string, populate the
+ * base types.
+ */
 static bool
-llvm_base_mod_create(void);
+llvm_base_module_create(void);
 
+/** Diagnostic handler for internal LLVM errors. */
 static
 void llvm_diag_handler(LLVMDiagnosticInfoRef di, void *unused);
 
+/**
+ * Callback function passed to LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator:
+ * creates a default object linking layer.
+ */
 static LLVMOrcObjectLayerRef
-llvm_obj_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
-		      const char *unused2);
+llvm_obj_linking_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
+			      const char *unused2);
 
+/** Create an LLVM Orc LLJIT instance. */
 static bool
 llvm_lljit_inst_create(LLVMTargetMachineRef tm);
 
+/** Allocate a new llvm_jit_ctx from parsing context's region. */
 static struct llvm_jit_ctx *
 llvm_jit_ctx_new(Parse *parse_ctx);
 
+/**
+ * Retrieve the error message string from LLVMErrorRef and disposes it,
+ * preliminarily saving the error message to the static buffer.
+ */
 static const char *
 llvm_get_err_msg(LLVMErrorRef err);
 
+/** Callback function passed to LLVMOrcExecutionSessionSetErrorReporter. */
 static void
 llvm_log_jit_error(void *unused, LLVMErrorRef err);
 
+/** Build a return code check. */
 static void
 llvm_build_rc_check(struct llvm_build_ctx *ctx, LLVMValueRef llvm_rc);
 
+/** Build a null value. */
 static void
 llvm_build_null(struct llvm_build_ctx *ctx);
 
+/** Build an integer value. */
 static bool
 llvm_build_int(struct llvm_build_ctx *ctx, bool is_neg);
 
+/** Build a boolean value. */
 static void
 llvm_build_bool(struct llvm_build_ctx *ctx);
 
+/** Build a double precision floating point value. */
 static bool
 llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg);
 
+/** Build null-terminated string value. */
 static bool
-llvm_build_str(struct llvm_build_ctx *ctx, const char *z);
+llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z);
 
+/** Build a column reference value. */
 static void
 build_col_ref(struct llvm_build_ctx *build_ctx);
 
+/** Build the current expression. */
 static bool
 llvm_build_expr(struct llvm_build_ctx *ctx);
 
+/** Compile the current module. */
 static bool
 llvm_compile_module(struct llvm_jit_ctx *ctx);
 
@@ -246,7 +185,7 @@ llvm_session_init(void)
 		say_error("failed to initialize native asm parser");
 		return false;
 	}
-	if (!llvm_base_mod_create())
+	if (!llvm_base_module_create())
 		return false;
 	llvm_triple = LLVMGetTarget(llvm_base_mod);
 	assert(llvm_triple);
@@ -555,14 +494,6 @@ llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx)
 	free(ctx);
 }
 
-int
-llvm_jit_get_fn_under_construction_id(struct llvm_jit_ctx *ctx)
-{
-	assert(ctx);
-
-	return ctx->build_ctx->fn_id;
-}
-
 bool
 llvm_jit_verify(struct llvm_jit_ctx *jit_ctx)
 {
@@ -592,11 +523,22 @@ llvm_jit_verify(struct llvm_jit_ctx *jit_ctx)
 }
 
 static bool
-llvm_base_mod_create(void)
+llvm_base_module_create(void)
 {
 	LLVMMemoryBufferRef buf;
 	size_t len;
 	LLVMContextRef module_ctx;
+	struct load_type {
+		const char *name;
+		LLVMTypeRef *type;
+		bool is_ptr;
+	} load_types[] = {
+	{ "struct.Vdbe", &llvm_vdbe_type, false },
+	{ "struct.Vdbe", &llvm_vdbe_ptr_type, true },
+	{ "struct.Mem", &llvm_mem_type, false },
+	{ "struct.Mem", &llvm_mem_ptr_type, true },
+	{ "struct.vdbe_field_ref", &llvm_vdbe_field_ref_type, false },
+	};
 
 	len = lengthof(llvm_jit_lib_bin);
 	buf = LLVMCreateMemoryBufferWithMemoryRange((const char *)llvm_jit_lib_bin,
@@ -613,19 +555,18 @@ llvm_base_mod_create(void)
 	module_ctx = LLVMGetModuleContext(llvm_base_mod);
 	assert(module_ctx);
 	LLVMContextSetDiagnosticHandler(module_ctx, llvm_diag_handler, NULL);
-	for (size_t i = 0; i < lengthof(base_types); ++i) {
-		struct base_type base_type;
+	for (size_t i = 0; i < lengthof(load_types); ++i) {
+		struct load_type load_type;
 		LLVMTypeRef type;
 
-		base_type = base_types[i];
-		type = LLVMGetTypeByName(llvm_base_mod, base_type.name);
+		load_type = load_types[i];
+		type = LLVMGetTypeByName(llvm_base_mod, load_type.name);
 		if (type == NULL) {
 			/* FIXME: move to diag_set */
-			say_error("failed to find function: %s", base_type.name);
+			say_error("failed to find type: %s", load_type.name);
 			return false;
 		}
-		*base_type.type =
-		base_type.is_ptr ? LLVMPointerType(type, 0) : type;
+		*load_type.type = load_type.is_ptr ? LLVMPointerType(type, 0) : type;
 	}
 	return true;
 }
@@ -644,8 +585,8 @@ void llvm_diag_handler(LLVMDiagnosticInfoRef di, void *unused) {
 }
 
 static LLVMOrcObjectLayerRef
-llvm_obj_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
-		      const char *unused2)
+llvm_obj_linking_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
+			      const char *unused2)
 {
 	(void)unused1;
 	(void)unused2;
@@ -706,7 +647,7 @@ llvm_lljit_inst_create(LLVMTargetMachineRef tm)
 	assert(jtmb);
 	LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(lljit_builder, jtmb);
 	LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(lljit_builder,
-							llvm_obj_layer_create,
+							llvm_obj_linking_layer_create,
 							NULL);
 	err = LLVMOrcCreateLLJIT(&llvm_lljit, lljit_builder);
 	if (err) {
@@ -755,7 +696,19 @@ llvm_jit_ctx_new(Parse *parse_ctx)
 	LLVMContextRef m_ctx;
 	size_t build_ctx_sz;
 	struct llvm_build_ctx *build_ctx;
-	int sql_str_len_lim;
+	struct load_fn {
+		const char *name;
+		LLVMValueRef *llvm_fn;
+	} load_fns[] = {
+	{ "mem_copy", &llvm_mem_copy },
+	{ "mem_set_null", &llvm_mem_set_null },
+	{ "mem_set_int", &llvm_mem_set_int },
+	{ "mem_set_bool", &llvm_mem_set_bool },
+	{ "mem_set_double", &llvm_mem_set_double },
+	{ "mem_set_str0_static", &llvm_mem_set_str0_static },
+	{ "vdbe_field_ref_fetch", &llvm_vdbe_field_ref_fetch },
+	{ "vdbe_op_col", &llvm_vdbe_op_col }
+	};
 
 	jit_ctx_sz = sizeof(struct llvm_jit_ctx);
 	jit_ctx = malloc(jit_ctx_sz);
@@ -768,11 +721,11 @@ llvm_jit_ctx_new(Parse *parse_ctx)
 	m_ctx = LLVMGetModuleContext(m);
 	assert(m_ctx);
 	LLVMContextSetDiagnosticHandler(m_ctx, llvm_diag_handler, NULL);
-	for (size_t i = 0; i < lengthof(base_fns); ++i) {
-		struct base_fn load_fn;
+	for (size_t i = 0; i < lengthof(load_fns); ++i) {
+		struct load_fn load_fn;
 		LLVMValueRef llvm_fn;
 
-		load_fn = base_fns[i];
+		load_fn = load_fns[i];
 		llvm_fn = *load_fn.llvm_fn = LLVMGetNamedFunction(m, load_fn.name);
 		if (llvm_fn == NULL) {
 			/* FIXME: move to diag_set */
@@ -791,9 +744,6 @@ llvm_jit_ctx_new(Parse *parse_ctx)
 		return NULL;
 	}
 	memset(jit_ctx->build_ctx, 0, sizeof(struct llvm_build_ctx));
-	sql_str_len_lim = build_ctx->sql_str_len_lim =
-		parse_ctx->db->aLimit[SQL_LIMIT_LENGTH];
-	assert(sql_str_len_lim >= 0);
 	jit_ctx->cnt = 0;
 	return jit_ctx;
 }
@@ -1032,9 +982,9 @@ llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg)
 }
 
 static bool
-llvm_build_str(struct llvm_build_ctx *ctx, const char *z)
+llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z)
 {
-	assert(ctx);
+	assert(build_ctx);
 	assert(z);
 
 	LLVMBuilderRef b;
@@ -1046,18 +996,18 @@ llvm_build_str(struct llvm_build_ctx *ctx, const char *z)
 	LLVMValueRef llvm_fn_args[2];
 	unsigned int llvm_fn_args_cnt;
 
-	b = ctx->builder;
+	b = build_ctx->builder;
 	assert(b);
 	/* FIXME: is this conversion legit? */
 	len = sqlStrlen30(z);
 	assert(len > 0);
 	/* FIXME: what is the best way to handle this? */
-	if (len > ctx->sql_str_len_lim) {
+	if (len > build_ctx->parse_ctx->db->aLimit[SQL_LIMIT_LENGTH]) {
 		diag_set(ClientError, ER_LLVM_IR_COMPILATION,
 			 "string or blob too big");
 		return false;
 	}
-	llvm_tgt_reg = ctx->llvm_tgt_reg;
+	llvm_tgt_reg = build_ctx->llvm_tgt_reg;
 	assert(llvm_tgt_reg);
 	llvm_z = LLVMBuildGlobalStringPtr(b, z, "");
 	assert(llvm_z);

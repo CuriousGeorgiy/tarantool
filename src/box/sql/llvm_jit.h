@@ -35,21 +35,79 @@
 
 #include "box/session.h"
 
-/** Minimal expression list item height to consider using JIT compilation. */
+#include "llvm-c/Core.h"
+#include "llvm-c/Orc.h"
+
+/** Minimal expression list item height to consider JIT'ing. */
 enum {
 	JIT_MIN_TOTAL_EXPR_LIST_HEIGHT = 1
 };
 
-/** Minimal tuple count to consider using JIT compilation. */
+/** Minimal tuple count to consider JIT'ing. */
 enum {
 	JIT_MIN_TUPLE_CNT = 1
 };
 
+/**
+ * LLVM construction context used to hold useful information during construction
+ * of expression lists.
+ */
+struct llvm_build_ctx {
+	/** ID of current callback function under construction. */
+	int fn_id;
+	/** Emission of LLVM IR into basic blocks. */
+	LLVMBuilderRef builder;
+	/** Current parsing context. */
+	Parse *parse_ctx;
+	/** Source registers index, for use by SQL_ECEL_OMIT_REF optimization. */
+	int src_regs_idx;
+	/** Target registers index, to which expression values are pushed. */
+	int tgt_regs_idx;
+	/** Current callback function under construction. */
+	LLVMValueRef llvm_fn;
+	/** VDBE pointer passed to the callback function. */
+	LLVMValueRef llvm_vdbe;
+	/** VDBE registers array. */
+	LLVMValueRef llvm_regs;
+	/** Current expression processed. */
+	Expr *expr;
+	/** VDBE target register index for current expression (numerical value). */
+	int tgt_reg_idx;
+	/** VDBE target register index for current expression (LLVM value). */
+	LLVMValueRef llvm_tgt_reg_idx;
+	/** VDBE target register for current expression. */
+	LLVMValueRef llvm_tgt_reg;
+};
+
+/**
+ * LLVM JIT context, holds all necessary data for the JIT infrastructure.
+ */
+struct llvm_jit_ctx {
+	/** Current module in which callback functions are built. */
+	LLVMModuleRef module;
+	/** Resource tracker of main LLVM JITDyLib. */
+	LLVMOrcResourceTrackerRef rt;
+	/** Whether the module pends to be compiled. */
+	bool compiled;
+	/**
+	 * Build context: allocated at the current parsing context's region
+	 * when llvm_build_expr_list_init is called.
+	 */
+	struct llvm_build_ctx *build_ctx;
+	/**
+	 * Number of functions currently built — used to generate
+	 * non-conflicting callback function names.
+	 */
+	int cnt;
+};
+
+/** Initialize the LLVM subsystem and the LLVM JIT infrastructure.  */
 bool
 llvm_session_init(void);
 
+/** Check whether the LLVM JIT infrastructure is available. */
 static inline bool
-llvm_jit_enabled(void)
+llvm_jit_available(void)
 {
 	if (!sql_get()->llvm_session_init)
 		return false;
@@ -58,25 +116,31 @@ llvm_jit_enabled(void)
 	return true;
 }
 
+/** Initialize the llvm_build_ctx state. */
 void
 llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs);
 
-bool
-llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx);
-
+/** Build expression list item. */
 bool
 llvm_build_expr_list_item(struct llvm_jit_ctx *jit_ctx,
 			  struct ExprList_item *item, int expr_idx,
 			  int flags);
 
+/** Finalize the llvm_build_ctx state, verify the callback function built. */
+bool
+llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx);
+
+/**
+ * Execute the compiled expression list via the callback function:
+ * push expression values to target registers.
+ */
 bool
 llvm_exec_compiled_expr_list(struct llvm_jit_ctx *ctx, int fn_id, Vdbe *vdbe);
 
+/** Delete the llvm_jit_ctx. */
 void
 llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
 
-int
-llvm_jit_get_fn_under_construction_id(struct llvm_jit_ctx *ctx);
-
+/** Verify the LLVM module, containing constructed callback functions. */
 bool
 llvm_jit_verify(struct llvm_jit_ctx *jit_ctx);
