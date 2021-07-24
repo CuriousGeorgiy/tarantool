@@ -64,10 +64,6 @@ static LLVMValueRef llvm_mem_set_str0_static;
 static LLVMValueRef llvm_vdbe_field_ref_fetch;
 static LLVMValueRef llvm_vdbe_op_col;
 
-/** LLVM Orc thread safe context required for creating thread safe modules. */
-static LLVMOrcThreadSafeContextRef llvm_ts_ctx;
-/* FIXME: should be disposed sometime? */
-
 /** LLVM Orc LLJIT instance. */
 static LLVMOrcLLJITRef llvm_lljit;
 /* FIXME: should be disposed sometime? */
@@ -224,8 +220,6 @@ llvm_session_init(void)
 		say_error("failed to load symbols from tarantool binary");
 		return false;
 	}
-	llvm_ts_ctx = LLVMOrcCreateNewThreadSafeContext();
-	assert(llvm_ts_ctx);
 	if (!llvm_lljit_inst_create(default_tm))
 		return false;
 	sql_get()->llvm_session_init = true;
@@ -1222,17 +1216,20 @@ llvm_compile_module(struct llvm_jit_ctx *ctx)
 	assert(ctx);
 
 	LLVMModuleRef m;
+	LLVMOrcThreadSafeContextRef ts_ctx;
 	LLVMOrcThreadSafeModuleRef tsm;
 	LLVMOrcJITDylibRef jd;
 	LLVMOrcResourceTrackerRef rt;
 	LLVMErrorRef err;
 
 	m = ctx->module;
-	assert(llvm_ts_ctx);
-	tsm = LLVMOrcCreateNewThreadSafeModule(m, llvm_ts_ctx);
+	assert(m);
+	ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+	assert(ts_ctx);
+	tsm = LLVMOrcCreateNewThreadSafeModule(m, ts_ctx);
 	assert(tsm);
-	free(ctx->module); /* ownership transferred to thread safe module */
-	ctx->module = NULL;
+	LLVMOrcDisposeThreadSafeContext(ts_ctx);
+	ctx->module = NULL; /* ownership transferred to thread-safe module */
 	assert(llvm_lljit);
 	jd = LLVMOrcLLJITGetMainJITDylib(llvm_lljit);
 	rt = ctx->rt = LLVMOrcJITDylibCreateResourceTracker(jd);
