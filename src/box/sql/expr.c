@@ -4681,7 +4681,8 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 
 			expr = item->pExpr;
 			assert(expr);
-			if ((flags & (SQL_ECEL_REF | SQL_ECEL_OMITREF)) != 0 &&
+			if ((flags & SQL_ECEL_REF) != 0 &&
+			    (flags & SQL_ECEL_OMITREF) != 0 &&
 			    (j = item->u.x.iOrderByCol) > 0) {
 				--i;
 				--expr_cnt;
