@@ -67,8 +67,9 @@ static LLVMValueRef llvm_mem_set_int;
 static LLVMValueRef llvm_mem_set_bool;
 static LLVMValueRef llvm_mem_set_double;
 static LLVMValueRef llvm_mem_set_str0_static;
-static LLVMValueRef llvm_vdbe_op_fetch;
+static LLVMValueRef llvm_vdbe_op_realify;
 static LLVMValueRef llvm_vdbe_op_column;
+static LLVMValueRef llvm_vdbe_op_fetch;
 
 /** LLVM Orc LLJIT instance. */
 static LLVMOrcLLJITRef llvm_lljit;
@@ -125,9 +126,12 @@ llvm_lljit_add_module(struct llvm_jit_ctx *jit_ctx);
 static bool
 llvm_build_expr(struct llvm_build_ctx *ctx);
 
+static bool
+llvm_build_agg_column(struct llvm_build_ctx *ctx);
+
 /** Build a column reference value. */
 static bool
-build_col_ref(struct llvm_build_ctx *build_ctx);
+llvm_build_col_ref(struct llvm_build_ctx *build_ctx);
 
 /** Build an integer value. */
 static bool
@@ -741,8 +745,9 @@ llvm_load_bootstrap_module(void)
 	{ "mem_set_bool", &llvm_mem_set_bool },
 	{ "mem_set_double", &llvm_mem_set_double },
 	{ "mem_set_str0_static", &llvm_mem_set_str0_static },
-	{ "vdbe_op_fetch", &llvm_vdbe_op_fetch },
+	{ "vdbe_op_realify", &llvm_vdbe_op_realify },
 	{ "vdbe_op_column", &llvm_vdbe_op_column },
+	{ "vdbe_op_fetch", &llvm_vdbe_op_fetch },
 	};
 
 	len = lengthof(llvm_jit_bootstrap_bin);
@@ -981,8 +986,10 @@ llvm_build_expr(struct llvm_build_ctx *ctx)
 	assert(expr);
 	op = !expr ? TK_NULL : expr->op;
 	switch (op) {
+	case TK_AGG_COLUMN:
+		return llvm_build_agg_column(ctx);
 	case TK_COLUMN_REF:
-		return build_col_ref(ctx);
+		return llvm_build_col_ref(ctx);
 	case TK_INTEGER:
 		return llvm_build_int(ctx, false);
 	case TK_TRUE:
@@ -1008,7 +1015,78 @@ llvm_build_expr(struct llvm_build_ctx *ctx)
 }
 
 static bool
-build_col_ref(struct llvm_build_ctx *build_ctx)
+llvm_build_agg_column(struct llvm_build_ctx *ctx)
+{
+	assert(ctx);
+
+	Expr *expr;
+	AggInfo *agg_info;
+	struct AggInfo_col *agg_info_col;
+
+	expr = ctx->expr;
+	assert(expr);
+	agg_info = expr->pAggInfo;
+	assert(agg_info);
+	assert(expr->iAgg >= 0);
+	agg_info_col = &agg_info->aCol[expr->iAgg];
+	if (!agg_info->directMode) {
+		assert(agg_info_col->iMem > 0);
+
+		int tgt_reg_idx;
+
+		tgt_reg_idx = ctx->tgt_reg_idx;
+		assert(tgt_reg_idx > 0);
+		if (agg_info_col->iMem == tgt_reg_idx)
+			return true;
+		llvm_build_mem_copy(ctx, agg_info_col->iMem, tgt_reg_idx);
+		return true;
+	} else if (agg_info->useSortingIdx) {
+		struct space_def *space_def;
+
+		space_def = agg_info_col->space_def;
+		assert(space_def);
+		assert(agg_info->sortingIdxPTab >= 0);
+		assert(agg_info_col->iSorterColumn >= 0);
+
+		if (!llvm_build_vdbe_op_column(ctx, agg_info->sortingIdxPTab,
+					       agg_info_col->iSorterColumn))
+			return false;
+		if (space_def->fields[expr->iAgg].type == FIELD_TYPE_NUMBER) {
+			LLVMModuleRef m;
+			LLVMBuilderRef b;
+			LLVMValueRef llvm_vdbe;
+			LLVMValueRef llvm_tgt_reg_idx;
+			LLVMValueRef llvm_fn;
+			LLVMTypeRef llvm_fn_type;
+			LLVMValueRef llvm_fn_args[2];
+			unsigned int llvm_fn_args_cnt;
+
+			m = ctx->module;
+			assert(m);
+			b = ctx->builder;
+			assert(b);
+			llvm_vdbe = ctx->llvm_vdbe;
+			assert(llvm_vdbe);
+			llvm_tgt_reg_idx = ctx->llvm_tgt_reg_idx;
+			assert(llvm_tgt_reg_idx);
+			llvm_fn = llvm_get_fn(m, llvm_vdbe_op_realify);
+			assert(llvm_fn);
+			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+			assert(llvm_fn_type);
+			llvm_fn_args[0] = llvm_vdbe;
+			llvm_fn_args[1] = llvm_tgt_reg_idx;
+			llvm_fn_args_cnt = lengthof(llvm_fn_args);
+			ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
+					      llvm_fn_args, llvm_fn_args_cnt, ""));
+			return true;
+		}
+		return true;
+	}
+	return llvm_build_col_ref(ctx);
+}
+
+static bool
+llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 {
 	assert(build_ctx);
 

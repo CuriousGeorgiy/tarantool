@@ -49,6 +49,7 @@ mem_set_int,
 mem_set_bool,
 mem_set_double,
 mem_set_str0_static,
-vdbe_op_fetch,
+vdbe_op_realify,
 vdbe_op_column,
+vdbe_op_fetch,
 };

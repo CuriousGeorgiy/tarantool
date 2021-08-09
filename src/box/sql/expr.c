@@ -2118,6 +2118,7 @@ static int
 expr_node_can_be_jit_compiled(Walker *walker, Expr *expr)
 {
 	switch (expr->op) {
+	case TK_AGG_COLUMN:
 	case TK_COLUMN_REF:
 	case TK_INTEGER:
 	case TK_TRUE:
@@ -2140,7 +2141,6 @@ expr_node_can_be_jit_compiled(Walker *walker, Expr *expr)
 	case TK_GT:
 	case TK_NE:
 	case TK_EQ:
-        case TK_AGG_COLUMN:
 	case TK_CONCAT:
 #endif
 		return WRC_Continue;

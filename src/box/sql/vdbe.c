@@ -412,20 +412,18 @@ vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 	return 0;
 }
 
-int
-vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx)
+void
+vdbe_op_realify(Vdbe *vdbe, int tgt_reg_idx)
 {
 	assert(vdbe);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
 
-	struct vdbe_field_ref *field_ref;
 	struct Mem *tgt_reg;
 
-	field_ref = (struct vdbe_field_ref *)vdbe->aMem[field_ref_reg_idx].u.p;
-	tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
-	if (vdbe_field_ref_fetch(field_ref, field_idx, tgt_reg) != 0)
-		return -1;
-	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
-	return 0;
+	tgt_reg = &vdbe->aMem[tgt_reg_idx];
+	assert(tgt_reg);
+	if (mem_is_int(tgt_reg))
+		mem_to_double(tgt_reg);
 }
 
 int
@@ -469,7 +467,7 @@ vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx)
 			assert(btree_csr);
 			assert(sqlCursorIsValid(btree_csr));
 			assert(btree_csr->curFlags & BTCF_TaCursor ||
-			       btree_csr->curFlags & BTCF_TEphemCursor);
+			btree_csr->curFlags & BTCF_TEphemCursor);
 			vdbe_field_ref_prepare_tuple(&vdbe_csr->field_ref,
 						     btree_csr->last_tuple);
 		}
@@ -483,7 +481,27 @@ vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx)
 	if (vdbe_field_ref_fetch(&vdbe_csr->field_ref, col, tgt_reg) != 0)
 		return -1;
 	tgt_reg->field_type = field_type;
-op_column_out:
+	op_column_out:
+	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
+	return 0;
+}
+
+int
+vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx)
+{
+	assert(vdbe);
+	assert(field_ref_reg_idx > 0 &&
+	       field_ref_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+	assert(field_idx >= 0);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+
+	struct vdbe_field_ref *field_ref;
+	struct Mem *tgt_reg;
+
+	field_ref = (struct vdbe_field_ref *)vdbe->aMem[field_ref_reg_idx].u.p;
+	tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
+	if (vdbe_field_ref_fetch(field_ref, field_idx, tgt_reg) != 0)
+		return -1;
 	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
 	return 0;
 }

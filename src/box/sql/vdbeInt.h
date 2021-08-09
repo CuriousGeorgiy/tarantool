@@ -359,11 +359,14 @@ int
 vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 		     struct Mem *dest_mem);
 
-int
-vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx);
+void
+vdbe_op_realify(Vdbe *vdbe, int tgt_reg_idx);
 
 int
 vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx);
+
+int
+vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx);
 
 void sqlVdbeSorterClose(sql *, VdbeCursor *);
 int sqlVdbeSorterRowkey(const VdbeCursor *, Mem *);
