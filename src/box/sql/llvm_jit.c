@@ -30,7 +30,8 @@
  */
 
 #include "llvm_jit.h"
-#include "llvm_jit_lib.h"
+
+#include "llvm_jit_bootstrap.h"
 
 #include "mem.h"
 #include "sqlInt.h"
@@ -41,8 +42,14 @@
 #include "llvm-c/BitReader.h"
 #include "llvm-c/LLJIT.h"
 #include "llvm-c/OrcEE.h"
-#include "llvm-c/Support.h"
 #include "llvm-c/Target.h"
+
+/**
+ * This part of the build context remains persistent for the whole construction
+ * process.
+ */
+static const size_t llvm_build_ctx_init_sz =
+	offsetof(struct llvm_build_ctx, fn_id);
 
 /** Used for callback function name generation. */
 static const char *const fn_name_prefix = "expr_";
@@ -50,7 +57,6 @@ static const char *const fn_name_prefix = "expr_";
 /** Types referenced during construction of LLVM IR. */
 static LLVMTypeRef llvm_vdbe_type;
 static LLVMTypeRef llvm_vdbe_ptr_type;
-static LLVMTypeRef llvm_vdbe_field_ref_type;
 static LLVMTypeRef llvm_mem_type;
 static LLVMTypeRef llvm_mem_ptr_type;
 
@@ -61,26 +67,25 @@ static LLVMValueRef llvm_mem_set_int;
 static LLVMValueRef llvm_mem_set_bool;
 static LLVMValueRef llvm_mem_set_double;
 static LLVMValueRef llvm_mem_set_str0_static;
-static LLVMValueRef llvm_vdbe_field_ref_fetch;
-static LLVMValueRef llvm_vdbe_op_col;
+static LLVMValueRef llvm_vdbe_op_fetch;
+static LLVMValueRef llvm_vdbe_op_column;
 
 /** LLVM Orc LLJIT instance. */
 static LLVMOrcLLJITRef llvm_lljit;
 /* FIXME: should be disposed sometime? */
 
 /**
- * Module containing type definitions and auxiliary functions implementation.
- * Other modules are cloned from it in order to contain the implementation of
- * all auxiliary functions so that they can be inlined.
+ * Module containing type definitions and referenced auxiliary function
+ * prototypes. Other modules are cloned from it.
  */
-static LLVMModuleRef llvm_base_mod;
+static LLVMModuleRef llvm_bootstrap_module;
 
 /**
  * Create the base module from an embedded LLVM bitcode string, populate the
  * base types.
  */
 static bool
-llvm_base_module_create(void);
+llvm_load_bootstrap_module(void);
 
 /** Diagnostic handler for internal LLVM errors. */
 static
@@ -98,10 +103,6 @@ llvm_obj_linking_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
 static bool
 llvm_lljit_inst_create(LLVMTargetMachineRef tm);
 
-/** Allocate a new llvm_jit_ctx from parsing context's region. */
-static struct llvm_jit_ctx *
-llvm_jit_ctx_new(Parse *parse_ctx);
-
 /**
  * Retrieve the error message string from LLVMErrorRef and disposes it,
  * preliminarily saving the error message to the static buffer.
@@ -109,17 +110,24 @@ llvm_jit_ctx_new(Parse *parse_ctx);
 static const char *
 llvm_get_err_msg(LLVMErrorRef err);
 
+static LLVMValueRef
+llvm_get_fn(LLVMModuleRef m, LLVMValueRef extern_fn);
+
 /** Callback function passed to LLVMOrcExecutionSessionSetErrorReporter. */
 static void
 llvm_log_jit_error(void *unused, LLVMErrorRef err);
 
-/** Build a return code check. */
-static void
-llvm_build_rc_check(struct llvm_build_ctx *ctx, LLVMValueRef llvm_rc);
+/** Add the current module to LLJIT. */
+static bool
+llvm_lljit_add_module(struct llvm_jit_ctx *jit_ctx);
 
-/** Build a null value. */
-static void
-llvm_build_null(struct llvm_build_ctx *ctx);
+/** Build the current expression. */
+static bool
+llvm_build_expr(struct llvm_build_ctx *ctx);
+
+/** Build a column reference value. */
+static bool
+build_col_ref(struct llvm_build_ctx *build_ctx);
 
 /** Build an integer value. */
 static bool
@@ -137,25 +145,25 @@ llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg);
 static bool
 llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z);
 
-/** Build a column reference value. */
+/** Build a null value. */
 static void
-build_col_ref(struct llvm_build_ctx *build_ctx);
+llvm_build_null(struct llvm_build_ctx *ctx);
 
-/** Build the current expression. */
-static bool
-llvm_build_expr(struct llvm_build_ctx *ctx);
+/** Build a call to mem_copy and check its return code */
+static void
+llvm_build_mem_copy(struct llvm_build_ctx *ctx, int src_reg_idx,
+		    int tgt_reg_idx);
 
-/** Compile the current module. */
-static bool
-llvm_compile_module(struct llvm_jit_ctx *ctx);
+/** Build a return code check. */
+static void
+llvm_build_rc_check(struct llvm_build_ctx *ctx, LLVMValueRef llvm_rc);
 
 bool
 llvm_session_init(void)
 {
-	assert(sql_get());
-	assert(!sql_get()->llvm_session_init);
-
-	LLVMContextRef global_ctx;
+	sql *sql;
+	LLVMPassRegistryRef llvm_gl_pass_reg;
+	LLVMContextRef llvm_gl_ctx;
 	const char *llvm_triple;
 	LLVMTargetRef llvm_t;
 	LLVMTargetMachineRef default_tm;
@@ -163,17 +171,18 @@ llvm_session_init(void)
 	char *cpu_name;
 	char *cpu_feats;
 
-	global_ctx = LLVMGetGlobalContext();
-	assert(global_ctx);
-	LLVMContextSetDiagnosticHandler(global_ctx, llvm_diag_handler, NULL);
+	sql = sql_get();
+	assert(sql);
+	assert(!sql->llvm_session_init);
+	llvm_gl_pass_reg = LLVMGetGlobalPassRegistry();
+	assert(llvm_gl_pass_reg);
+	LLVMInitializeCore(llvm_gl_pass_reg);
+	llvm_gl_ctx = LLVMGetGlobalContext();
+	assert(llvm_gl_ctx);
+	LLVMContextSetDiagnosticHandler(llvm_gl_ctx, llvm_diag_handler, NULL);
 	if (LLVMInitializeNativeTarget() != 0) {
 		/* FIXME: move to diag_set */
 		say_error("failed to initialize native target");
-		return false;
-	}
-	if (LLVMInitializeNativeAsmPrinter() != 0) {
-		/* FIXME: move to diag_set */
-		say_error("failed to initialize native asm printer");
 		return false;
 	}
 	if (LLVMInitializeNativeAsmParser() != 0) {
@@ -181,9 +190,14 @@ llvm_session_init(void)
 		say_error("failed to initialize native asm parser");
 		return false;
 	}
-	if (!llvm_base_module_create())
+	if (LLVMInitializeNativeAsmPrinter() != 0) {
+		/* FIXME: move to diag_set */
+		say_error("failed to initialize native asm printer");
 		return false;
-	llvm_triple = LLVMGetTarget(llvm_base_mod);
+	}
+	if (!llvm_load_bootstrap_module())
+		return false;
+	llvm_triple = LLVMGetTarget(llvm_bootstrap_module);
 	assert(llvm_triple);
 	if (LLVMGetTargetFromTriple(llvm_triple, &llvm_t, &err_msg) != 0) {
 		/* FIXME: move to diag_set */
@@ -214,47 +228,103 @@ llvm_session_init(void)
 	cpu_name = NULL;
 	LLVMDisposeMessage(cpu_feats);
 	cpu_feats = NULL;
-	/* force symbols in tarantool binary to be loaded */
-	if (LLVMLoadLibraryPermanently(NULL) != 0) {
-		/* FIXME: move to diag_set */
-		say_error("failed to load symbols from tarantool binary");
-		return false;
-	}
 	if (!llvm_lljit_inst_create(default_tm))
 		return false;
-	sql_get()->llvm_session_init = true;
+	sql->llvm_session_init = true;
 	return true;
 }
 
 struct llvm_jit_ctx *
-parse_get_jit_ctx(Parse *parse_ctx)
+llvm_jit_ctx_new(Parse *parse_ctx)
 {
 	assert(parse_ctx);
 
+	size_t jit_ctx_sz;
 	struct llvm_jit_ctx *jit_ctx;
-	struct region *region;
+	LLVMContextRef llvm_m_ctx;
+	LLVMModuleRef m;
+	size_t build_ctx_sz;
+	struct llvm_build_ctx *build_ctx;
 
-	jit_ctx = parse_ctx->llvm_jit_ctx;
-	region = &parse_ctx->region;
+	jit_ctx_sz = sizeof(struct llvm_jit_ctx);
+	jit_ctx = sqlMalloc(jit_ctx_sz);
 	if (!jit_ctx) {
-		jit_ctx = llvm_jit_ctx_new(parse_ctx);
-		if (!jit_ctx) {
-			parse_ctx->is_aborted = true;
-			return NULL;
-		}
-		parse_ctx->llvm_jit_ctx = jit_ctx;
+		diag_set(OutOfMemory, jit_ctx_sz, "sqlMalloc",
+			 "struct llvm_jit_ctx");
+		return NULL;
 	}
+	/* FIXME: should use a thread-safe context instead of a global one? */
+	m = jit_ctx->module = LLVMModuleCreateWithName("tnt_sql");
+	assert(m);
+	llvm_m_ctx = LLVMGetModuleContext(m);
+	assert(llvm_m_ctx);
+	LLVMContextSetDiagnosticHandler(llvm_m_ctx, llvm_diag_handler, NULL);
+	jit_ctx->rt = NULL;
+	jit_ctx->compiled = false;
+	build_ctx_sz = sizeof(struct llvm_build_ctx);
+	build_ctx = jit_ctx->build_ctx =
+	region_alloc(&parse_ctx->region, build_ctx_sz);
+	if (!build_ctx) {
+		diag_set(OutOfMemory, build_ctx_sz, "region_alloc",
+			 "struct llvm_build_ctx");
+		return NULL;
+	}
+	build_ctx->module = m;
+	build_ctx->builder = LLVMCreateBuilder();
+	build_ctx->parse_ctx = parse_ctx;
+	/* FIXME: is this safe to do? */
+	memset((char *)build_ctx + llvm_build_ctx_init_sz, 0,
+	       build_ctx_sz - llvm_build_ctx_init_sz);
+	jit_ctx->cnt = 0;
 	return jit_ctx;
 }
 
 void
-llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs)
+llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx)
 {
-	assert(parse);
+	LLVMOrcResourceTrackerRef rt;
+	LLVMOrcExecutionSessionRef es;
+	LLVMOrcSymbolStringPoolRef ssp;
+	LLVMErrorRef err;
+
+	if (!ctx)
+		return;
+	if (!ctx->compiled) {
+		assert(ctx->module);
+		LLVMDisposeModule(ctx->module);
+		ctx->module = NULL;
+	}
+	rt = ctx->rt;
+	if (rt) {
+		err = LLVMOrcResourceTrackerRemove(rt);
+		if (err) {
+			const char *err_msg;
+
+			err_msg = llvm_get_err_msg(err);
+			assert(err_msg);
+			/* FIXME: move to diag_set */
+			say_error("failed to remove resource tracker: %s",
+				  err_msg);
+			/* FIXME: should return status? */
+			return;
+		}
+		LLVMOrcReleaseResourceTracker(rt);
+	}
+	es = LLVMOrcLLJITGetExecutionSession(llvm_lljit);
+	assert(es);
+	ssp = LLVMOrcExecutionSessionGetSymbolStringPool(es);
+	assert(ssp);
+	LLVMOrcSymbolStringPoolClearDeadEntries(ssp);
+	sql_free(ctx);
+}
+
+void
+llvm_build_expr_list_init(struct llvm_jit_ctx *jit_ctx, int src_regs, int tgt_regs)
+{
+	assert(jit_ctx);
 	assert(src_regs >= 0);
 	assert(tgt_regs > 0);
 
-	struct llvm_jit_ctx *jit_ctx;
 	LLVMModuleRef m;
 	LLVMTargetDataRef td;
 	LLVMBuilderRef b;
@@ -270,8 +340,6 @@ llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs)
 	LLVMValueRef llvm_regs_ptr;
 	LLVMValueRef llvm_regs;
 
-	jit_ctx = parse->llvm_jit_ctx;
-	assert(jit_ctx);
 	m = jit_ctx->module;
 	assert(m);
 	td = LLVMGetModuleDataLayout(m);
@@ -279,8 +347,9 @@ llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs)
 	build_ctx = jit_ctx->build_ctx;
 	assert(build_ctx);
 	fn_id = build_ctx->fn_id = jit_ctx->cnt++;
-	b = build_ctx->builder = LLVMCreateBuilder();
-	build_ctx->parse_ctx = parse;
+	assert(fn_id >= 0);
+	b = build_ctx->builder;
+	assert(b);
 	assert(fn_id >= 0);
 	build_ctx->src_regs_idx = src_regs;
 	build_ctx->tgt_regs_idx = tgt_regs;
@@ -323,20 +392,36 @@ llvm_build_expr_list_item(struct llvm_jit_ctx *jit_ctx,
 
 	struct llvm_build_ctx *build_ctx;
 	LLVMBuilderRef b;
+	Expr *expr;
+	int tgt_regs_idx;
 	int tgt_reg_idx;
-	const char *name;
-	int j;
 	LLVMValueRef llvm_tgt_reg_idx;
+	const char *name;
 	LLVMValueRef llvm_tgt_reg;
+	int j;
 
 	build_ctx = jit_ctx->build_ctx;
 	assert(build_ctx);
-	build_ctx->expr = item->pExpr;
-	assert(build_ctx->expr);
 	b = build_ctx->builder;
 	assert(b);
-	assert(build_ctx->tgt_regs_idx > 0);
-	tgt_reg_idx = build_ctx->tgt_reg_idx = build_ctx->tgt_regs_idx + expr_idx;
+	expr = build_ctx->expr = item->pExpr;
+	assert(expr);
+	tgt_regs_idx = build_ctx->tgt_regs_idx;
+	assert(tgt_regs_idx > 0);
+	tgt_reg_idx = build_ctx->tgt_reg_idx = tgt_regs_idx + expr_idx;
+	if ((flags & SQL_ECEL_REF) != 0
+	    && (j = item->u.x.iOrderByCol) > 0) {
+		assert((flags & SQL_ECEL_OMITREF) == 0);
+
+		int src_regs_idx;
+		int src_reg_idx;
+
+		src_regs_idx = build_ctx->src_regs_idx;
+		assert(src_regs_idx >= 0);
+		src_reg_idx = src_regs_idx + j - 1;
+		llvm_build_mem_copy(build_ctx, src_reg_idx, tgt_reg_idx);
+		return true;
+	}
 	llvm_tgt_reg_idx = build_ctx->llvm_tgt_reg_idx =
 		LLVMConstInt(LLVMInt32Type(), tgt_reg_idx , false);
 	assert(llvm_tgt_reg_idx);
@@ -346,44 +431,6 @@ llvm_build_expr_list_item(struct llvm_jit_ctx *jit_ctx,
 		LLVMBuildInBoundsGEP2(b, llvm_mem_type, build_ctx->llvm_regs,
 				      &llvm_tgt_reg_idx, 1, name);
 	assert(llvm_tgt_reg);
-	if ((flags & SQL_ECEL_REF) != 0
-	    && (j = item->u.x.iOrderByCol) > 0) {
-		assert((flags & SQL_ECEL_OMITREF) == 0);
-		int src_reg_idx;
-		LLVMValueRef llvm_src_reg_idx;
-		LLVMValueRef llvm_src_reg;
-		LLVMValueRef llvm_fn;
-		LLVMTypeRef llvm_fn_type;
-		LLVMValueRef llvm_fn_args[2];
-		unsigned int llvm_fn_args_cnt;
-		LLVMValueRef llvm_rc;
-
-		assert(build_ctx->src_regs_idx > 0);
-		src_reg_idx = build_ctx->src_regs_idx + j - 1;
-		llvm_src_reg_idx =
-			LLVMConstInt(LLVMInt32Type(), src_reg_idx, false);
-		assert(llvm_src_reg_idx);
-		name = tt_sprintf("src_reg_%d", j);
-		assert(name);
-		llvm_src_reg =
-			LLVMBuildInBoundsGEP2(b, llvm_mem_type,
-					      build_ctx->llvm_regs,
-					      &llvm_src_reg_idx, 1, name);
-		assert(llvm_src_reg);
-		/* FIXME: copy operation depending on SQL_ECEL_DUP */
-		llvm_fn = llvm_mem_copy;
-		assert(llvm_fn);
-		llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-		assert(llvm_fn_type);
-		llvm_fn_args[0] = llvm_tgt_reg;
-		llvm_fn_args[1] = llvm_src_reg;
-		llvm_fn_args_cnt = lengthof(llvm_fn_args);
-		llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-					 llvm_fn_args_cnt, "llvm_rc");
-		assert(llvm_rc);
-		llvm_build_rc_check(build_ctx, llvm_rc);
-		return true;
-	}
 	return llvm_build_expr(build_ctx);
 }
 
@@ -396,7 +443,9 @@ llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx)
 	struct llvm_build_ctx *build_ctx;
 	LLVMBuilderRef b;
 	LLVMValueRef llvm_fn;
+	size_t build_ctx_sz;
 	LLVMValueRef llvm_ok;
+	char *err_msg;
 
 	build_ctx = jit_ctx->build_ctx;
 	assert(build_ctx);
@@ -404,11 +453,21 @@ llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx)
 	assert(b);
 	m = jit_ctx->module;
 	assert(m);
-	llvm_fn = jit_ctx->build_ctx->llvm_fn;
+	llvm_fn = build_ctx->llvm_fn;
 	assert(llvm_fn);
+	build_ctx_sz = sizeof(struct llvm_build_ctx);
+	memset((char *)build_ctx + llvm_build_ctx_init_sz, 0,
+	       build_ctx_sz - llvm_build_ctx_init_sz);
 	llvm_ok = LLVMConstInt(LLVMInt1Type(), true, false);
 	assert(llvm_ok);
 	ALWAYS(LLVMBuildRet(b, llvm_ok));
+	if (LLVMPrintModuleToFile(m, "tnt_sql.ll", &err_msg) != 0) {
+		/* FIXME: move to diag_set */
+		say_error("printing module to file failed: %s", err_msg);
+		LLVMDisposeMessage(err_msg);
+		err_msg = NULL;
+		return false;
+	}
 	if (LLVMVerifyFunction(llvm_fn, LLVMPrintMessageAction) != 0) {
 		diag_set(ClientError, ER_LLVM_IR_COMPILATION,
 			 "function IR verification failed");
@@ -429,7 +488,7 @@ llvm_exec_compiled_expr_list(struct llvm_jit_ctx *ctx, int fn_id, Vdbe *vdbe)
 	LLVMErrorRef err;
 	const char *err_msg;
 
-	if (!ctx->compiled && !llvm_compile_module(ctx))
+	if (!ctx->compiled && !llvm_lljit_add_module(ctx))
 		return -1;
 	fn_name = tt_sprintf("%s%d", fn_name_prefix, fn_id);
 	assert(fn_name);
@@ -450,57 +509,23 @@ llvm_exec_compiled_expr_list(struct llvm_jit_ctx *ctx, int fn_id, Vdbe *vdbe)
 	return ((bool (*) (Vdbe *))fn_addr)(vdbe);
 }
 
-void
-llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx)
-{
-	LLVMOrcResourceTrackerRef rt;
-	LLVMOrcExecutionSessionRef es;
-	LLVMOrcSymbolStringPoolRef ssp;
-	LLVMErrorRef err;
-
-	if (!ctx)
-		return;
-	if (ctx->module) {
-		LLVMDisposeModule(ctx->module);
-		ctx->module = NULL;
-	}
-	rt = ctx->rt;
-	if (rt) {
-		err = LLVMOrcResourceTrackerRemove(rt);
-		if (err) {
-			const char *err_msg;
-
-			err_msg = llvm_get_err_msg(err);
-			assert(err_msg);
-			/* FIXME: move to diag_set */
-			say_error("failed to remove resource tracker: %s",
-				  err_msg);
-			/* FIXME: should return status? */
-			return;
-		}
-		LLVMOrcReleaseResourceTracker(rt);
-	}
-	es = LLVMOrcLLJITGetExecutionSession(llvm_lljit);
-	assert(es);
-	ssp = LLVMOrcExecutionSessionGetSymbolStringPool(es);
-	assert(ssp);
-	LLVMOrcSymbolStringPoolClearDeadEntries(ssp);
-	free(ctx);
-}
-
 bool
-llvm_jit_verify(struct llvm_jit_ctx *jit_ctx)
+llvm_jit_fin(struct llvm_jit_ctx *jit_ctx)
 {
 	assert(jit_ctx);
 
 	LLVMModuleRef m;
 	struct llvm_build_ctx *build_ctx;
+	LLVMBuilderRef b;
 	char *err_msg;
 
 	build_ctx = jit_ctx->build_ctx;
 	assert(build_ctx);
+	b = build_ctx->builder;
+	assert(b);
+	LLVMDisposeBuilder(b);
 	m = jit_ctx->module;
-	if (LLVMPrintModuleToFile(m, "vdbe.ll", &err_msg) != 0) {
+	if (LLVMPrintModuleToFile(m, "tnt_sql.ll", &err_msg) != 0) {
 		/* FIXME: move to diag_set */
 		say_error("printing module to file failed: %s", err_msg);
 		LLVMDisposeMessage(err_msg);
@@ -517,50 +542,78 @@ llvm_jit_verify(struct llvm_jit_ctx *jit_ctx)
 }
 
 static bool
-llvm_base_module_create(void)
+llvm_load_bootstrap_module(void)
 {
 	LLVMMemoryBufferRef buf;
 	size_t len;
-	LLVMContextRef module_ctx;
+	LLVMModuleRef m;
+	LLVMContextRef m_ctx;
 	struct load_type {
 		const char *name;
 		LLVMTypeRef *type;
 		bool is_ptr;
-	} load_types[] = {
+	} const load_types[] = {
 	{ "struct.Vdbe", &llvm_vdbe_type, false },
 	{ "struct.Vdbe", &llvm_vdbe_ptr_type, true },
 	{ "struct.Mem", &llvm_mem_type, false },
 	{ "struct.Mem", &llvm_mem_ptr_type, true },
-	{ "struct.vdbe_field_ref", &llvm_vdbe_field_ref_type, false },
+	};
+	struct load_fn {
+		const char *name;
+		LLVMValueRef *llvm_fn;
+	} const load_fns[] = {
+	{ "mem_copy", &llvm_mem_copy },
+	{ "mem_set_null", &llvm_mem_set_null },
+	{ "mem_set_int", &llvm_mem_set_int },
+	{ "mem_set_bool", &llvm_mem_set_bool },
+	{ "mem_set_double", &llvm_mem_set_double },
+	{ "mem_set_str0_static", &llvm_mem_set_str0_static },
+	{ "vdbe_op_fetch", &llvm_vdbe_op_fetch },
+	{ "vdbe_op_column", &llvm_vdbe_op_column },
 	};
 
-	len = lengthof(llvm_jit_lib_bin);
-	buf = LLVMCreateMemoryBufferWithMemoryRange((const char *)llvm_jit_lib_bin,
+	len = lengthof(llvm_jit_bootstrap_bin);
+	buf = LLVMCreateMemoryBufferWithMemoryRange((const char *)llvm_jit_bootstrap_bin,
 						    len, NULL, false);
 	assert(buf);
-	if (LLVMParseBitcode2(buf, &llvm_base_mod) != 0) {
+	if (LLVMParseBitcode2(buf, &llvm_bootstrap_module) != 0) {
 		/* FIXME: move to diag_set */
 		say_error("parsing of LLVM bitcode failed");
 		return false;
 	}
-	assert(llvm_base_mod);
 	LLVMDisposeMemoryBuffer(buf);
 	buf = NULL;
-	module_ctx = LLVMGetModuleContext(llvm_base_mod);
-	assert(module_ctx);
-	LLVMContextSetDiagnosticHandler(module_ctx, llvm_diag_handler, NULL);
+	m = llvm_bootstrap_module;
+	assert(m);
+	m_ctx = LLVMGetModuleContext(m);
+	assert(m_ctx);
+	LLVMContextSetDiagnosticHandler(m_ctx, llvm_diag_handler, NULL);
 	for (size_t i = 0; i < lengthof(load_types); ++i) {
 		struct load_type load_type;
 		LLVMTypeRef type;
 
 		load_type = load_types[i];
-		type = LLVMGetTypeByName(llvm_base_mod, load_type.name);
+		type = LLVMGetTypeByName(m, load_type.name);
 		if (type == NULL) {
 			/* FIXME: move to diag_set */
 			say_error("failed to find type: %s", load_type.name);
 			return false;
 		}
-		*load_type.type = load_type.is_ptr ? LLVMPointerType(type, 0) : type;
+		*load_type.type =
+			load_type.is_ptr ? LLVMPointerType(type, 0) : type;
+	}
+	for (size_t i = 0; i < lengthof(load_fns); ++i) {
+		struct load_fn load_fn;
+		LLVMValueRef llvm_fn;
+
+		load_fn = load_fns[i];
+		llvm_fn = *load_fn.llvm_fn =
+			LLVMGetNamedFunction(m, load_fn.name);
+		if (llvm_fn == NULL) {
+			/* FIXME: move to diag_set */
+			say_error("failed to load function '%s'", load_fn.name);
+			return false;
+		}
 	}
 	return true;
 }
@@ -589,6 +642,29 @@ llvm_obj_linking_layer_create(void *unused1, LLVMOrcExecutionSessionRef es,
 
 	ol = LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(es);
 	return ol;
+}
+
+static LLVMValueRef
+llvm_get_fn(LLVMModuleRef m, LLVMValueRef extern_fn)
+{
+	assert(m);
+	assert(extern_fn);
+
+	LLVMValueRef internal_fn;
+	LLVMTypeRef fn_type;
+	const char *fn_name;
+	size_t unused;
+
+	fn_name = LLVMGetValueName2(extern_fn, &unused);
+	assert(fn_name);
+	internal_fn = LLVMGetNamedFunction(m, fn_name);
+	if (internal_fn)
+		return internal_fn;
+	fn_type = LLVMGetElementType(LLVMTypeOf(extern_fn));
+	assert(fn_type);
+	internal_fn = LLVMAddFunction(m, fn_name, fn_type);
+	assert(internal_fn);
+	return internal_fn;
 }
 
 static void
@@ -630,7 +706,7 @@ llvm_lljit_inst_create(LLVMTargetMachineRef tm)
 	LLVMOrcJITTargetMachineBuilderRef jtmb;
 	LLVMOrcLLJITBuilderRef lljit_builder;
 	LLVMOrcExecutionSessionRef es;
-	char lljit_global_prefix;
+	char lljit_gl_prefix;
 	LLVMOrcDefinitionGeneratorRef dg;
 	LLVMOrcJITDylibRef jd;
 	LLVMErrorRef err;
@@ -660,9 +736,9 @@ llvm_lljit_inst_create(LLVMTargetMachineRef tm)
 	/*
 	 * Symbol resolution support for symbols in the tarantool binary.
 	 */
-	lljit_global_prefix = LLVMOrcLLJITGetGlobalPrefix(llvm_lljit);
+	lljit_gl_prefix = LLVMOrcLLJITGetGlobalPrefix(llvm_lljit);
 	err = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&dg,
-								   lljit_global_prefix,
+								   lljit_gl_prefix,
 								   NULL, NULL);
 	if (err) {
 		const char *err_msg;
@@ -679,128 +755,299 @@ llvm_lljit_inst_create(LLVMTargetMachineRef tm)
 	return true;
 }
 
-static struct llvm_jit_ctx *
-llvm_jit_ctx_new(Parse *parse_ctx)
+static bool
+llvm_lljit_add_module(struct llvm_jit_ctx *jit_ctx)
 {
-	assert(parse_ctx);
+	assert(jit_ctx);
 
-	size_t jit_ctx_sz;
-	struct llvm_jit_ctx *jit_ctx;
+	LLVMModuleRef m;
+	LLVMOrcThreadSafeContextRef llvm_ts_ctx;
+	LLVMOrcThreadSafeModuleRef tsm;
+	LLVMOrcJITDylibRef jd;
+	LLVMOrcResourceTrackerRef rt;
+	LLVMErrorRef err;
+
+	m = jit_ctx->module;
+	assert(m);
+	llvm_ts_ctx = LLVMOrcCreateNewThreadSafeContext();
+	assert(llvm_ts_ctx);
+	tsm = LLVMOrcCreateNewThreadSafeModule(m, llvm_ts_ctx);
+	assert(tsm);
+	LLVMOrcDisposeThreadSafeContext(llvm_ts_ctx);
+	jit_ctx->module = NULL; /* Ownership transferred to thread-safe module. */
+	assert(llvm_lljit);
+	jd = LLVMOrcLLJITGetMainJITDylib(llvm_lljit);
+	rt = jit_ctx->rt = LLVMOrcJITDylibCreateResourceTracker(jd);
+	assert(rt);
+	/*
+	 * NB: This does not actually compile code. That happens lazily the first
+	 * time a symbol defined in the module is requested.
+	 */
+	err = LLVMOrcLLJITAddLLVMIRModuleWithRT(llvm_lljit, rt, tsm);
+	if (err) {
+		const char *err_msg;
+
+		err_msg = llvm_get_err_msg(err);
+		assert(err_msg);
+		diag_set(ClientError, ER_LLVM_IR_COMPILATION, err_msg);
+		return false;
+	}
+	jit_ctx->compiled = true;
+	return true;
+}
+
+static bool
+llvm_build_expr(struct llvm_build_ctx *ctx)
+{
+	assert(ctx);
+
+	Expr *expr;
+	int op;
+
+	expr = ctx->expr;
+	assert(expr);
+	op = !expr ? TK_NULL : expr->op;
+	switch (op) {
+	case TK_COLUMN_REF:
+		return build_col_ref(ctx);
+	case TK_INTEGER:
+		return llvm_build_int(ctx, false);
+	case TK_TRUE:
+	case TK_FALSE:
+		llvm_build_bool(ctx);
+		return true;
+	case TK_FLOAT:
+		assert(!ExprHasProperty(expr, EP_IntValue));
+		return llvm_build_double(ctx, expr->u.zToken, false);
+	case TK_STRING:
+		assert(!ExprHasProperty(expr, EP_IntValue));
+		return llvm_build_str(ctx, expr->u.zToken);
+	case TK_NULL:
+		llvm_build_null(ctx);
+		return true;
+	case TK_UPLUS:
+		ctx->expr = expr->pLeft;
+		assert(ctx->expr != NULL);
+		return llvm_build_expr(ctx);
+	default:
+		unreachable();
+	}
+}
+
+static bool
+build_col_ref(struct llvm_build_ctx *build_ctx)
+{
+	assert(build_ctx);
+
 	LLVMModuleRef m;
 	LLVMContextRef m_ctx;
-	size_t build_ctx_sz;
-	struct llvm_build_ctx *build_ctx;
-	struct load_fn {
-		const char *name;
-		LLVMValueRef *llvm_fn;
-	} load_fns[] = {
-	{ "mem_copy", &llvm_mem_copy },
-	{ "mem_set_null", &llvm_mem_set_null },
-	{ "mem_set_int", &llvm_mem_set_int },
-	{ "mem_set_bool", &llvm_mem_set_bool },
-	{ "mem_set_double", &llvm_mem_set_double },
-	{ "mem_set_str0_static", &llvm_mem_set_str0_static },
-	{ "vdbe_field_ref_fetch", &llvm_vdbe_field_ref_fetch },
-	{ "vdbe_op_col", &llvm_vdbe_op_col }
-	};
+	LLVMBuilderRef b;
+	Expr *expr;
+	int tab;
+	int col;
+	Parse *parse_ctx;
+	LLVMValueRef llvm_regs;
+	LLVMValueRef llvm_tgt_reg;
+	LLVMValueRef llvm_tgt_reg_idx;
+	int tgt_reg_idx;
+	LLVMValueRef llvm_fn;
+	LLVMTypeRef llvm_fn_type;
+	unsigned int llvm_fn_args_cnt;
 
-	jit_ctx_sz = sizeof(struct llvm_jit_ctx);
-	jit_ctx = malloc(jit_ctx_sz);
-	if (!jit_ctx) {
-		diag_set(OutOfMemory, jit_ctx_sz, "malloc", "struct llvm_jit_ctx");
-		return NULL;
-	}
-	m = jit_ctx->module = LLVMCloneModule(llvm_base_mod);
+	m = build_ctx->module;
 	assert(m);
 	m_ctx = LLVMGetModuleContext(m);
 	assert(m_ctx);
-	LLVMContextSetDiagnosticHandler(m_ctx, llvm_diag_handler, NULL);
-	for (size_t i = 0; i < lengthof(load_fns); ++i) {
-		struct load_fn load_fn;
-		LLVMValueRef llvm_fn;
+	b = build_ctx->builder;
+	assert(b);
+	expr = build_ctx->expr;
+	assert(expr);
+	tab = expr->iTable;
+	col = expr->iColumn;
+	assert(col >= 0);
+	parse_ctx = build_ctx->parse_ctx;
+	assert(parse_ctx);
+	llvm_vdbe = build_ctx->llvm_vdbe;
+	assert(llvm_vdbe);
+	llvm_tgt_reg = build_ctx->llvm_tgt_reg;
+	assert(llvm_tgt_reg);
+	llvm_tgt_reg_idx = build_ctx->llvm_tgt_reg_idx;
+	assert(llvm_tgt_reg_idx);
+	if (tab < 0) {
+		if (parse_ctx->vdbe_field_ref_reg > 0) {
+			LLVMTargetDataRef td;
+			int vdbe_field_ref_reg_idx;
+			LLVMValueRef llvm_vdbe_field_ref_reg_idx;
+			LLVMValueRef llvm_field_idx;
+			LLVMValueRef llvm_fn_args[4];
 
-		load_fn = load_fns[i];
-		llvm_fn = *load_fn.llvm_fn = LLVMGetNamedFunction(m, load_fn.name);
-		if (llvm_fn == NULL) {
-			/* FIXME: move to diag_set */
-			say_error("failed to load function '%s'", load_fn.name);
-			return NULL;
+			td = LLVMGetModuleDataLayout(m);
+			assert(td);
+			vdbe_field_ref_reg_idx = parse_ctx->vdbe_field_ref_reg;
+			assert(vdbe_field_ref_reg_idx >= 0);
+			llvm_vdbe_field_ref_reg_idx =
+				LLVMConstInt(LLVMInt32Type(),
+					     vdbe_field_ref_reg_idx, false);
+			assert(llvm_vdbe_field_ref_reg_idx);
+			llvm_fn = llvm_get_fn(m, llvm_vdbe_op_fetch);
+			assert(llvm_fn);
+			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+			assert(llvm_fn_type);
+			llvm_field_idx = LLVMConstInt(LLVMInt32Type(), col, false);
+			assert(llvm_field_idx);
+			llvm_fn_args[0] = llvm_vdbe;
+			llvm_fn_args[1] = llvm_vdbe_field_ref_reg_idx;
+			llvm_fn_args[2] = llvm_field_idx;
+			llvm_fn_args[3] = llvm_tgt_reg_idx;
+			llvm_fn_args_cnt = lengthof(llvm_fn_args);
+			llvm_rc =
+				LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
+					       llvm_fn_args, llvm_fn_args_cnt, "rc");
+			assert(llvm_rc);
+			llvm_build_rc_check(build_ctx, llvm_rc);
+			return true;
+		} else {
+			/*
+			 * Coding an expression that is part of an index where
+			 * column names in the index refer to the table to which
+			 * the index belongs.
+			 */
+			tab = parse_ctx->iSelfTab;
 		}
 	}
-	jit_ctx->rt = NULL;
-	jit_ctx->compiled = false;
-	build_ctx_sz = sizeof(struct llvm_build_ctx);
-	build_ctx = jit_ctx->build_ctx =
-		region_alloc(&parse_ctx->region, build_ctx_sz);
-	if (!build_ctx) {
-		diag_set(OutOfMemory, build_ctx_sz, "region_alloc",
-			 "struct llvm_build_ctx");
-		return NULL;
+	llvm_regs = curr_col_ref_meta.llvm_regs = build_ctx->llvm_regs;
+	assert(llvm_regs);
+	for (i = 0, p = parse_ctx->aColCache; i < parse_ctx->nColCache; ++i, ++p) {
+		if (p->iTable == tab && p->iColumn == col) {
+			p->lru = parse_ctx->iCacheCnt++;
+			assert(p->lru >= 0);
+			assert(p->iReg > 0);
+
+			LLVMValueRef llvm_idx;
+			const char *name;
+			LLVMValueRef llvm_cached_column_reg;
+			LLVMValueRef llvm_fn_args[2];
+
+			sqlExprCachePinRegister(parse_ctx, p->iReg);
+			llvm_idx = LLVMConstInt(LLVMInt64Type(), p->iReg, false);
+			assert(llvm_idx);
+			name = "cached_col_reg";
+			llvm_cached_column_reg =
+				LLVMBuildInBoundsGEP2(b, llvm_mem_type,
+						      llvm_regs, &llvm_idx, 1,
+						      name);
+			assert(llvm_cached_column_reg);
+			/* FIXME: copy operation depending on SQL_ECEL_DUP */
+			llvm_fn = llvm_get_fn(m, llvm_mem_copy);
+			assert(llvm_fn);
+			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+			assert(llvm_fn_type);
+			llvm_fn_args[0] = llvm_tgt_reg;
+			llvm_fn_args[1] =llvm_cached_column_reg;
+			llvm_fn_args_cnt = lengthof(llvm_fn_args);
+			llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
+						 llvm_fn_args, llvm_fn_args_cnt, "");
+			llvm_build_rc_check(build_ctx, llvm_rc);
+			return true;
+		}
 	}
-	memset(jit_ctx->build_ctx, 0, sizeof(struct llvm_build_ctx));
-	jit_ctx->cnt = 0;
-	return jit_ctx;
-}
 
-static void
-llvm_build_rc_check(struct llvm_build_ctx *ctx, LLVMValueRef llvm_rc)
-{
-	assert(ctx);
-	assert(llvm_rc);
+	LLVMValueRef llvm_fn_args[4];
 
-	LLVMBuilderRef b;
-	LLVMValueRef llvm_fn;
-	LLVMBasicBlockRef curr_bb;
-	LLVMBasicBlockRef then_bb;
-	LLVMBasicBlockRef else_bb;
-	LLVMValueRef llvm_if;
-	LLVMValueRef llvm_false;
-	LLVMValueRef llvm_true;
-
-	b = ctx->builder;
-	llvm_fn = ctx->llvm_fn;
-	curr_bb = LLVMGetInsertBlock(b);
+	llvm_curr_fn = curr_col_ref_meta.llvm_fn = build_ctx->llvm_fn;
+	assert(llvm_curr_fn);
+	curr_bb =  LLVMGetInsertBlock(b);
 	assert(curr_bb);
-	then_bb = LLVMAppendBasicBlock(llvm_fn, "llvm_false");
-	assert(then_bb);
-	LLVMPositionBuilderAtEnd(b, then_bb);
-	llvm_false = LLVMConstInt(LLVMInt1Type(), false, false);
-	assert(llvm_false);
-	ALWAYS(LLVMBuildRet(b, llvm_false));
-	else_bb = LLVMAppendBasicBlock(llvm_fn, "ok");
-	assert(else_bb);
-	LLVMPositionBuilderAtEnd(b, curr_bb);
-	llvm_true = LLVMConstInt(LLVMInt1Type(), true, false);
-	assert(llvm_true);
-	llvm_if = LLVMBuildICmp(b, LLVMIntNE, llvm_rc, llvm_true, "cond");
-	assert(llvm_if);
-	ALWAYS(LLVMBuildCondBr(b, llvm_if, then_bb, else_bb));
-	LLVMPositionBuilderAtEnd(b, else_bb);
-}
-
-static void
-llvm_build_null(struct llvm_build_ctx *ctx)
-{
-	assert(ctx != NULL);
-
-	LLVMBuilderRef b;
-	LLVMValueRef llvm_tgt_reg;
-	LLVMValueRef llvm_fn;
-	LLVMTypeRef llvm_fn_type;
-	LLVMValueRef llvm_fn_args[1];
-	unsigned int llvm_fn_args_cnt;
-
-	b = ctx->builder;
-	assert(b);
-	llvm_fn = llvm_mem_set_null;
+	op_col_begin_bb = curr_col_ref_meta.bb_begin =
+		LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_begin");
+	assert(op_col_begin_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_begin_bb);
+	LLVMBuildBr(b, op_col_begin_bb);
+	LLVMPositionBuilderAtEnd(b, op_col_begin_bb);
+	curr_col_ref_meta.tab = tab;
+	curr_col_ref_meta.col = col;
+	llvm_tab = curr_col_ref_meta.llvm_tab =
+		LLVMBuildAlloca(b, LLVMInt32Type(), "tab");
+	assert(llvm_tab);
+	llvm_tab_imm = LLVMConstInt(LLVMInt32Type(), tab, false);
+	assert(llvm_tab_imm);
+	llvm_tab_store = curr_col_ref_meta.llvm_tab_store =
+		LLVMBuildStore(b, llvm_tab_imm, llvm_tab);
+	assert(llvm_tab_store);
+	llvm_tab = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_tab, "");
+	llvm_col = curr_col_ref_meta.llvm_col =
+		LLVMBuildAlloca(b, LLVMInt32Type(), "col");
+	assert(llvm_col);
+	llvm_col_imm = LLVMConstInt(LLVMInt32Type(), col, false);
+	assert(llvm_col_imm);
+	llvm_col_store = curr_col_ref_meta.llvm_col_store =
+		LLVMBuildStore(b, llvm_col_imm, llvm_col);
+	assert(llvm_col_store);
+	llvm_col = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_col, "");
+	tgt_reg_idx = build_ctx->tgt_reg_idx;
+	assert(tgt_reg_idx > 0);
+	curr_col_ref_meta.tgt_reg_idx = tgt_reg_idx;
+	llvm_fn = llvm_get_fn(m, llvm_vdbe_op_column);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
-	llvm_tgt_reg = ctx->llvm_tgt_reg;
-	assert(llvm_tgt_reg);
-	llvm_fn_args[0] = llvm_tgt_reg;
+	llvm_fn_args[0] = llvm_vdbe;
+	llvm_fn_args[1] = llvm_tab;
+	llvm_fn_args[2] = llvm_col;
+	llvm_fn_args[3] = llvm_tgt_reg_idx;
 	llvm_fn_args_cnt = lengthof(llvm_fn_args);
-	ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args, llvm_fn_args_cnt, ""));
+	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
+				 llvm_fn_args_cnt, "rc");
+	assert(llvm_rc);
+	llvm_build_rc_check(build_ctx, llvm_rc);
+	curr_bb = LLVMGetInsertBlock(b);
+	op_col_end_bb = curr_col_ref_meta.bb_end =
+		LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_end");
+	assert(op_col_end_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_end_bb);
+	LLVMBuildBr(b, op_col_end_bb);
+	LLVMPositionBuilderAtEnd(b, op_col_end_bb);
+	if (!expr->op2)
+		sqlExprCacheStore(parse_ctx, tab, col, tgt_reg_idx);
+	col_ref_meta_cnt = build_ctx->col_ref_meta_cnt;
+	assert(col_ref_meta_cnt >= 0);
+	col_ref_meta = build_ctx->col_ref_meta;
+	if (!col_ref_meta_cnt) {
+		assert(!col_ref_meta);
+		region = &parse_ctx->region;
+		col_ref_meta = region_alloc_array(region,
+						  typeof(struct llvm_col_ref_meta),
+						  1, &col_ref_meta_sz);
+		if (!col_ref_meta)
+			goto region_alloc_err;
+	} else if (IsPowerOfTwo(col_ref_meta_cnt)) {
+		assert(col_ref_meta);
+		region = &parse_ctx->region;
+		col_ref_meta = region_alloc_array(region,
+						  typeof(struct llvm_col_ref_meta),
+						  col_ref_meta_cnt << 1,
+						  &col_ref_meta_sz);
+		if (!col_ref_meta)
+			goto region_alloc_err;
+		memcpy(col_ref_meta, build_ctx->col_ref_meta,
+		       col_ref_meta_cnt * sizeof(struct llvm_col_ref_meta));
+		/*
+		 * FIXME: is it okay that we do not clean up previously
+		 * allocated memory?
+		 */
+	}
+	if (col_ref_meta != build_ctx->col_ref_meta) {
+		assert(col_ref_meta);
+		build_ctx->col_ref_meta = col_ref_meta;
+	}
+	col_ref_meta[build_ctx->col_ref_meta_cnt++] = curr_col_ref_meta;
+	return true;
+
+region_alloc_err:
+	diag_set(OutOfMemory, col_ref_meta_sz, "region_alloc_array",
+		 "struct col_ref_meta");
+	parse_ctx->is_aborted = true;
+	return false;
 }
 
 static bool
@@ -808,6 +1055,7 @@ llvm_build_int(struct llvm_build_ctx *ctx, bool is_neg)
 {
 	assert(ctx);
 
+	LLVMModuleRef m;
 	LLVMBuilderRef b;
 	const char *z;
 	const char *sign;
@@ -820,9 +1068,11 @@ llvm_build_int(struct llvm_build_ctx *ctx, bool is_neg)
 	LLVMValueRef llvm_fn_args[3];
 	unsigned int llvm_fn_args_cnt;
 
+	m = ctx->module;
+	assert(m);
 	b = ctx->builder;
 	assert(b);
-	llvm_fn = llvm_mem_set_int;
+	llvm_fn = llvm_get_fn(m, llvm_mem_set_int);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
@@ -904,6 +1154,7 @@ llvm_build_bool(struct llvm_build_ctx *ctx)
 {
 	assert(ctx);
 
+	LLVMModuleRef m;
 	LLVMBuilderRef b;
 	LLVMValueRef llvm_tgt_reg;
 	LLVMValueRef llvm_val;
@@ -913,6 +1164,8 @@ llvm_build_bool(struct llvm_build_ctx *ctx)
 	LLVMValueRef llvm_fn_args[2];
 	unsigned int llvm_fn_args_cnt;
 
+	m = ctx->module;
+	assert(m);
 	b = ctx->builder;
 	assert(b);
 	expr = ctx->expr;
@@ -921,7 +1174,7 @@ llvm_build_bool(struct llvm_build_ctx *ctx)
 	assert(llvm_tgt_reg);
 	llvm_val = LLVMConstInt(LLVMInt1Type(), expr->op == TK_TRUE, false);
 	assert(llvm_val);
-	llvm_fn = llvm_mem_set_bool;
+	llvm_fn = llvm_get_fn(m, llvm_mem_set_bool);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
@@ -937,6 +1190,7 @@ llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg)
 	assert(ctx);
 	assert(z);
 
+	LLVMModuleRef m;
 	LLVMBuilderRef b;
 	int len;
 	double val;
@@ -947,6 +1201,8 @@ llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg)
 	LLVMValueRef llvm_fn_args[2];
 	unsigned int llvm_fn_args_cnt;
 
+	m = ctx->module;
+	assert(m);
 	b = ctx->builder;
 	assert(b);
 	/* FIXME: is this conversion legit? */
@@ -964,14 +1220,15 @@ llvm_build_double(struct llvm_build_ctx *ctx, const char *z, bool is_neg)
 	assert(llvm_tgt_reg);
 	llvm_val = LLVMConstReal(LLVMDoubleType(), val);
 	assert(llvm_val);
-	llvm_fn = llvm_mem_set_double;
+	llvm_fn = llvm_get_fn(m, llvm_mem_set_double);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
 	llvm_fn_args[0] = llvm_tgt_reg;
 	llvm_fn_args[1] = llvm_val ;
 	llvm_fn_args_cnt = lengthof(llvm_fn_args);
-	ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args, llvm_fn_args_cnt, ""));
+	ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
+			      llvm_fn_args_cnt, ""));
 	return true;
 }
 
@@ -981,6 +1238,7 @@ llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z)
 	assert(build_ctx);
 	assert(z);
 
+	LLVMModuleRef m;
 	LLVMBuilderRef b;
 	int len;
 	LLVMValueRef llvm_tgt_reg;
@@ -990,11 +1248,12 @@ llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z)
 	LLVMValueRef llvm_fn_args[2];
 	unsigned int llvm_fn_args_cnt;
 
+	m = build_ctx->module;
+	assert(m);
 	b = build_ctx->builder;
 	assert(b);
 	/* FIXME: is this conversion legit? */
 	len = sqlStrlen30(z);
-	assert(len > 0);
 	/* FIXME: what is the best way to handle this? */
 	if (len > build_ctx->parse_ctx->db->aLimit[SQL_LIMIT_LENGTH]) {
 		diag_set(ClientError, ER_LLVM_IR_COMPILATION,
@@ -1005,7 +1264,7 @@ llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z)
 	assert(llvm_tgt_reg);
 	llvm_z = LLVMBuildGlobalStringPtr(b, z, "");
 	assert(llvm_z);
-	llvm_fn = llvm_mem_set_str0_static;
+	llvm_fn = llvm_get_fn(m, llvm_mem_set_str0_static);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
@@ -1017,236 +1276,128 @@ llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z)
 }
 
 static void
-build_col_ref(struct llvm_build_ctx *build_ctx)
+llvm_build_null(struct llvm_build_ctx *ctx)
 {
-	assert(build_ctx);
-
-	LLVMBuilderRef b;
-	Expr *expr;
-	int csr;
-	int col;
-	Parse *parse_ctx;
-	LLVMValueRef llvm_tgt_reg;
-	LLVMValueRef llvm_tgt_reg_idx;
-	int tgt_reg_idx;
-	LLVMValueRef llvm_fn;
-	LLVMTypeRef llvm_fn_type;
-	unsigned int llvm_fn_args_cnt;
-	LLVMValueRef llvm_vdbe;
-	LLVMValueRef llvm_csr;
-	LLVMValueRef llvm_col;
-	LLVMValueRef llvm_rc;
-	int i;
-	struct yColCache *p;
-
-	b = build_ctx->builder;
-	assert(b);
-	expr = build_ctx->expr;
-	assert(expr);
-	csr = expr->iTable;
-	col = expr->iColumn;
-	assert(col >= 0);
-	parse_ctx = build_ctx->parse_ctx;
-	assert(parse_ctx);
-	llvm_tgt_reg = build_ctx->llvm_tgt_reg;
-	assert(llvm_tgt_reg);
-	llvm_tgt_reg_idx = build_ctx->llvm_tgt_reg_idx;
-	assert(llvm_tgt_reg_idx);
-	if (csr < 0) {
-		if (parse_ctx->vdbe_field_ref_reg > 0) {
-			int field_ref_reg_idx;
-			LLVMValueRef llvm_field_ref_reg_idx;
-			const char *name;
-			LLVMValueRef llvm_field_ref_reg;
-			LLVMValueRef llvm_field_ref;
-			LLVMValueRef llvm_field_no;
-			LLVMValueRef llvm_fn_args[3];
-
-			field_ref_reg_idx = parse_ctx->vdbe_field_ref_reg;
-			assert(field_ref_reg_idx >= 0);
-			llvm_field_ref_reg_idx = LLVMConstInt(LLVMInt64Type(),
-							      field_ref_reg_idx,
-							      false);
-			assert(llvm_field_ref_reg_idx);
-			name = "llvm_field_ref_reg";
-			llvm_field_ref_reg =
-				LLVMBuildInBoundsGEP2(b, llvm_mem_type,
-						      build_ctx->llvm_regs,
-						      &llvm_field_ref_reg_idx,
-						      1, name);
-			assert(llvm_field_ref_reg);
-			name = "field_ref";
-			llvm_field_ref =
-				LLVMBuildBitCast(b, llvm_field_ref_reg,
-						 llvm_vdbe_field_ref_type, name);
-			assert(llvm_field_ref);
-			llvm_fn = llvm_vdbe_field_ref_fetch;
-			assert(llvm_fn);
-			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-			assert(llvm_fn_type);
-			llvm_field_no =
-				LLVMConstInt(LLVMInt32Type(), col, false);
-			assert(llvm_field_no);
-			llvm_fn_args[0] = llvm_field_ref;
-			llvm_fn_args[1] = llvm_field_no;
-			llvm_fn_args[2] = llvm_tgt_reg;
-			llvm_fn_args_cnt = lengthof(llvm_fn_args);
-			llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-						 llvm_fn_args_cnt, "rc");
-			assert(llvm_rc);
-			llvm_build_rc_check(build_ctx, llvm_rc);
-			return;
-		} else {
-			/*
-			 * Coding an expression that is part of an index where
-			 * column names in the index refer to the table to which
-			 * the index belongs.
-			 */
-			csr = parse_ctx->iSelfTab;
-		}
-	}
-	for (i = 0, p = parse_ctx->aColCache; i < parse_ctx->nColCache; ++i, ++p) {
-		if (p->iTable == csr && p->iColumn == col) {
-			p->lru = parse_ctx->iCacheCnt++;
-			assert(p->lru >= 0);
-			assert(p->iReg > 0);
-
-			LLVMValueRef llvm_idx;
-			const char *name;
-			LLVMValueRef llvm_cached_column_reg;
-			LLVMValueRef llvm_regs;
-			LLVMValueRef llvm_fn_args[2];
-
-			sqlExprCachePinRegister(parse_ctx, p->iReg);
-			llvm_regs = build_ctx->llvm_regs;
-			assert(llvm_regs);
-			llvm_idx = LLVMConstInt(LLVMInt64Type(), p->iReg, false);
-			assert(llvm_idx);
-			name = "cached_col_reg";
-			llvm_cached_column_reg =
-				LLVMBuildInBoundsGEP2(b, llvm_mem_type,
-						      llvm_regs, &llvm_idx, 1,
-						      name);
-			assert(llvm_cached_column_reg);
-			/* FIXME: copy operation depending on SQL_ECEL_DUP */
-			llvm_fn = llvm_mem_copy;
-			assert(llvm_fn);
-			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-			assert(llvm_fn_type);
-			llvm_fn_args[0] = llvm_tgt_reg;
-			llvm_fn_args[1] =llvm_cached_column_reg;
-			llvm_fn_args_cnt = lengthof(llvm_fn_args);
-			llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-					      llvm_fn_args_cnt, "");
-			llvm_build_rc_check(build_ctx, llvm_rc);
-			return;
-		}
-	}
-
-	LLVMValueRef llvm_fn_args[5];
-
-	llvm_vdbe = build_ctx->llvm_vdbe;
-	assert(llvm_vdbe);
-	llvm_csr = LLVMConstInt(LLVMInt32Type(), csr, false);
-	assert(llvm_csr);
-	llvm_col = LLVMConstInt(LLVMInt32Type(), col, false);
-	assert(llvm_col);
-	llvm_fn = llvm_vdbe_op_col;
-	assert(llvm_fn);
-	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-	assert(llvm_fn_type);
-	llvm_fn_args[0] = llvm_vdbe;
-	llvm_fn_args[1] = llvm_csr;
-	llvm_fn_args[2] = llvm_col;
-	llvm_fn_args[3] = llvm_tgt_reg;
-	llvm_fn_args[4] = llvm_tgt_reg_idx;
-	llvm_fn_args_cnt = lengthof(llvm_fn_args);
-	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-				 llvm_fn_args_cnt, "rc");
-	assert(llvm_rc);
-	llvm_build_rc_check(build_ctx, llvm_rc);
-	if (!expr->op2) {
-		tgt_reg_idx = build_ctx->tgt_reg_idx;
-		assert(tgt_reg_idx > 0);
-		sqlExprCacheStore(parse_ctx, csr, col, tgt_reg_idx);
-	}
-}
-
-static bool
-llvm_build_expr(struct llvm_build_ctx *ctx)
-{
-	assert(ctx);
-
-	Expr *expr;
-	int op;
-
-	expr = ctx->expr;
-	assert(expr);
-	op = !expr ? TK_NULL : expr->op;
-	switch (op) {
-	case TK_COLUMN_REF:
-		build_col_ref(ctx);
-		return true;
-	case TK_INTEGER:
-		return llvm_build_int(ctx, false);
-	case TK_TRUE:
-	case TK_FALSE:
-		llvm_build_bool(ctx);
-		return true;
-	case TK_FLOAT:
-		assert(!ExprHasProperty(expr, EP_IntValue));
-		return llvm_build_double(ctx, expr->u.zToken, false);
-	case TK_STRING:
-		assert(!ExprHasProperty(expr, EP_IntValue));
-		return llvm_build_str(ctx, expr->u.zToken);
-	case TK_NULL:
-		llvm_build_null(ctx);
-		return true;
-	case TK_UPLUS:
-		assert(expr->pLeft != NULL);
-		return llvm_build_int(ctx, false);
-	default:
-		unreachable();
-	}
-}
-
-static bool
-llvm_compile_module(struct llvm_jit_ctx *ctx)
-{
-	assert(ctx);
+	assert(ctx != NULL);
 
 	LLVMModuleRef m;
-	LLVMOrcThreadSafeContextRef ts_ctx;
-	LLVMOrcThreadSafeModuleRef tsm;
-	LLVMOrcJITDylibRef jd;
-	LLVMOrcResourceTrackerRef rt;
-	LLVMErrorRef err;
+	LLVMBuilderRef b;
+	LLVMValueRef llvm_tgt_reg;
+	LLVMValueRef llvm_fn;
+	LLVMTypeRef llvm_fn_type;
+	LLVMValueRef llvm_fn_args[1];
+	unsigned int llvm_fn_args_cnt;
 
 	m = ctx->module;
 	assert(m);
-	ts_ctx = LLVMOrcCreateNewThreadSafeContext();
-	assert(ts_ctx);
-	tsm = LLVMOrcCreateNewThreadSafeModule(m, ts_ctx);
-	assert(tsm);
-	LLVMOrcDisposeThreadSafeContext(ts_ctx);
-	ctx->module = NULL; /* ownership transferred to thread-safe module */
-	assert(llvm_lljit);
-	jd = LLVMOrcLLJITGetMainJITDylib(llvm_lljit);
-	rt = ctx->rt = LLVMOrcJITDylibCreateResourceTracker(jd);
-	assert(rt);
-	/*
-	 * NB: This does not actually compile code. That happens lazily the first
-	 * time a symbol defined in the m is requested.
-	 */
-	err = LLVMOrcLLJITAddLLVMIRModuleWithRT(llvm_lljit, rt, tsm);
-	if (err) {
-		const char *err_msg;
+	b = ctx->builder;
+	assert(b);
+	llvm_fn = llvm_get_fn(m, llvm_mem_set_null);
+	assert(llvm_fn);
+	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+	assert(llvm_fn_type);
+	llvm_tgt_reg = ctx->llvm_tgt_reg;
+	assert(llvm_tgt_reg);
+	llvm_fn_args[0] = llvm_tgt_reg;
+	llvm_fn_args_cnt = lengthof(llvm_fn_args);
+	ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args, llvm_fn_args_cnt, ""));
+}
 
-		err_msg = llvm_get_err_msg(err);
-		assert(err_msg);
-		diag_set(ClientError, ER_LLVM_IR_COMPILATION, err_msg);
-		return false;
-	}
-	ctx->compiled = true;
-	return true;
+static void
+llvm_build_mem_copy(struct llvm_build_ctx *ctx, int src_reg_idx,
+		    int tgt_reg_idx)
+{
+	assert(ctx);
+	assert(src_reg_idx >= 0);
+	assert(tgt_reg_idx >= 0);
+
+	LLVMModuleRef m;
+	LLVMBuilderRef b;
+	LLVMValueRef llvm_src_reg_idx;
+	LLVMValueRef llvm_src_reg;
+	LLVMValueRef llvm_tgt_reg_idx;
+	LLVMValueRef llvm_tgt_reg;
+	LLVMValueRef llvm_regs;
+	LLVMValueRef llvm_fn;
+	LLVMTypeRef llvm_fn_type;
+	LLVMValueRef llvm_fn_args[2];
+	unsigned int llvm_fn_args_cnt;
+	LLVMValueRef llvm_rc;
+	const char *name;
+
+	m = ctx->module;
+	assert(m);
+	b = ctx->builder;
+	assert(b);
+	llvm_regs = ctx->llvm_regs;
+	assert(llvm_regs);
+	llvm_src_reg_idx = LLVMConstInt(LLVMInt32Type(), src_reg_idx, false);
+	assert(llvm_src_reg_idx);
+	name = tt_sprintf("src_reg");
+	assert(name);
+	llvm_src_reg = LLVMBuildInBoundsGEP2(b, llvm_mem_type, llvm_regs,
+					     &llvm_src_reg_idx, 1, name);
+	assert(llvm_src_reg);
+	llvm_tgt_reg_idx = LLVMConstInt(LLVMInt32Type(), tgt_reg_idx, false);
+	assert(llvm_tgt_reg_idx);
+	name = tt_sprintf("tgt_reg");
+	assert(name);
+	llvm_tgt_reg = LLVMBuildInBoundsGEP2(b, llvm_mem_type, llvm_regs,
+					     &llvm_tgt_reg_idx, 1, name);
+	assert(llvm_tgt_reg);
+	/* FIXME: copy operation can depend on SQL_ECEL_DUP */
+	llvm_fn = llvm_get_fn(m, llvm_mem_copy);
+	assert(llvm_fn);
+	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+	assert(llvm_fn_type);
+	llvm_fn_args[0] = llvm_tgt_reg;
+	llvm_fn_args[1] = llvm_src_reg;
+	llvm_fn_args_cnt = lengthof(llvm_fn_args);
+	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
+				 llvm_fn_args_cnt, "llvm_rc");
+	assert(llvm_rc);
+	llvm_build_rc_check(ctx, llvm_rc);
+}
+
+static void
+llvm_build_rc_check(struct llvm_build_ctx *ctx, LLVMValueRef llvm_rc)
+{
+	assert(ctx);
+	assert(llvm_rc);
+
+	LLVMModuleRef m;
+	LLVMContextRef m_ctx;
+	LLVMBuilderRef b;
+	LLVMBasicBlockRef curr_bb;
+	LLVMBasicBlockRef err_bb;
+	LLVMBasicBlockRef ok_bb;
+	LLVMValueRef llvm_if;
+	LLVMValueRef llvm_false;
+	LLVMValueRef llvm_ok;
+
+	m = ctx->module;
+	assert(m);
+	m_ctx = LLVMGetModuleContext(m);
+	assert(m_ctx);
+	b = ctx->builder;
+	assert(b);
+	curr_bb = LLVMGetInsertBlock(b);
+	assert(curr_bb);
+	err_bb = LLVMCreateBasicBlockInContext(m_ctx, "err");
+	assert(err_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, err_bb);
+	LLVMPositionBuilderAtEnd(b, err_bb);
+	llvm_false = LLVMConstInt(LLVMInt1Type(), false, false);
+	assert(llvm_false);
+	ALWAYS(LLVMBuildRet(b, llvm_false));
+	ok_bb = LLVMCreateBasicBlockInContext(m_ctx, "ok");
+	assert(ok_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, ok_bb);
+	LLVMPositionBuilderAtEnd(b, curr_bb);
+	llvm_ok = LLVMConstInt(LLVMInt32Type(), 0, false);
+	assert(llvm_ok);
+	llvm_if = LLVMBuildICmp(b, LLVMIntNE, llvm_rc, llvm_ok, "cond");
+	assert(llvm_if);
+	ALWAYS(LLVMBuildCondBr(b, llvm_if, err_bb, ok_bb));
+	LLVMPositionBuilderAtEnd(b, ok_bb);
 }

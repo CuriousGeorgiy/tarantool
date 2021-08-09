@@ -1,5 +1,3 @@
-#pragma once
-
 /*
  * Copyright 2019-2021, Tarantool AUTHORS, please see AUTHORS file.
  *
@@ -31,7 +29,10 @@
  * SUCH DAMAGE.
  */
 
+#pragma once
+
 #include "sqlInt.h"
+#include "whereInt.h"
 
 #include "box/session.h"
 
@@ -53,22 +54,24 @@ enum {
  * of expression lists.
  */
 struct llvm_build_ctx {
-	/** ID of current callback function under construction. */
-	int fn_id;
-	/** Emission of LLVM IR into basic blocks. */
+	/** Current module in which callback functions are built. */
+	LLVMModuleRef module;
+	/** Generation of LLVM IR into basic blocks. */
 	LLVMBuilderRef builder;
 	/** Current parsing context. */
 	Parse *parse_ctx;
-	/** Source registers index, for use by SQL_ECEL_OMIT_REF optimization. */
-	int src_regs_idx;
-	/** Target registers index, to which expression values are pushed. */
-	int tgt_regs_idx;
+	/** ID of current callback function under construction. */
+	int fn_id;
 	/** Current callback function under construction. */
 	LLVMValueRef llvm_fn;
 	/** VDBE pointer passed to the callback function. */
 	LLVMValueRef llvm_vdbe;
 	/** VDBE registers array. */
 	LLVMValueRef llvm_regs;
+	/** Source registers index, for use by SQL_ECEL_OMIT_REF optimization. */
+	int src_regs_idx;
+	/** Target registers index, to which expression values are pushed. */
+	int tgt_regs_idx;
 	/** Current expression processed. */
 	Expr *expr;
 	/** VDBE target register index for current expression (numerical value). */
@@ -116,9 +119,17 @@ llvm_jit_available(void)
 	return true;
 }
 
+/** Allocate a new LLVM JIT context from the parsing context's region. */
+struct llvm_jit_ctx *
+llvm_jit_ctx_new(Parse *parse_ctx);
+
+/** Delete the LLVM JIT context. */
+void
+llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
+
 /** Initialize the llvm_build_ctx state. */
 void
-llvm_build_expr_list_init(Parse *parse, int src_regs, int tgt_regs);
+llvm_build_expr_list_init(struct llvm_jit_ctx *jit_ctx, int src_regs, int tgt_regs);
 
 /** Build expression list item. */
 bool
@@ -137,7 +148,17 @@ llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx);
 bool
 llvm_exec_compiled_expr_list(struct llvm_jit_ctx *ctx, int fn_id, Vdbe *vdbe);
 
-/** Delete the llvm_jit_ctx. */
+/**
+ * Verify the LLVM module containing built callback functions and clean up
+ * resources used by the build context.
+ */
+bool
+llvm_jit_fin(struct llvm_jit_ctx *jit_ctx);
+
+/**
+ * Remove basic blocks containing OP_Column code and insert OP_Copy code
+ * instead of it.
+ */
 void
 llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
 

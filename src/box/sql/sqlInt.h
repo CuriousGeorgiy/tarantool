@@ -2614,9 +2614,6 @@ sql_normalized_name_region_new(struct region *r, const char *name, int len);
 int sqlKeywordCode(const unsigned char *, int);
 int sqlRunParser(Parse *, const char *);
 
-struct llvm_jit_ctx *
-parse_get_jit_ctx(Parse *parse_ctx);
-
 /**
  * This routine is called after a single SQL statement has been
  * parsed and a VDBE program to execute that statement has been

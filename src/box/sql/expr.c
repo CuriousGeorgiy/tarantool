@@ -2118,9 +2118,7 @@ static int
 expr_node_can_be_jit_compiled(Walker *walker, Expr *expr)
 {
 	switch (expr->op) {
-#if 0
 	case TK_COLUMN_REF:
-#endif
 	case TK_INTEGER:
 	case TK_TRUE:
 	case TK_FALSE:
@@ -2177,7 +2175,7 @@ expr_list_can_be_jit_compiled(ExprList *list)
 	int i;
 	struct ExprList_item *item;
 
-	if (!llvm_jit_enabled())
+	if (!llvm_jit_available())
 		return false;
 	totalHeight = 0;
 	for (i = 0, item = list->a; i < list->nExpr; ++i, ++item) {
@@ -4642,13 +4640,13 @@ int
 sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 		    ExprList *list,	/* The expression list coded */
 		    int tgt_regs_idx,	/* Where to write results */
-		    int src_regs,	/* Source registers if SQL_ECEL_REF */
+		    int src_regs_idx,	/* Source registers if SQL_ECEL_REF */
 		    u8 flags)		/* SQL_ECEL_* flags */
 {
 	assert(parse_ctx != NULL);
 	assert(list != NULL);
 	assert(tgt_regs_idx > 0);
-	assert(src_regs >= 0);
+	assert(src_regs_idx >= 0);
 
 	int i;
 	struct ExprList_item *item;
@@ -4663,16 +4661,21 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 		flags &= ~SQL_ECEL_FACTOR;
 	if (!parse_ctx->avoid_jit && expr_list_can_be_jit_compiled(list)) {
 		struct llvm_jit_ctx *jit_ctx;
+		struct llvm_build_ctx *build_ctx;
 		int fn_id;
+		int col_ref_meta_cnt;
+		struct llvm_col_ref_meta *col_ref_meta;
 
-		jit_ctx = parse_get_jit_ctx(parse_ctx);
+		jit_ctx = parse_ctx->llvm_jit_ctx;
 		if (!jit_ctx) {
-			parse_ctx->is_aborted = true;
-			return -1;
+			jit_ctx = llvm_jit_ctx_new(parse_ctx);
+			if (!jit_ctx) {
+				parse_ctx->is_aborted = true;
+				return -1;
+			}
+			parse_ctx->llvm_jit_ctx = jit_ctx;
 		}
-		llvm_build_expr_list_init(parse_ctx, src_regs, tgt_regs_idx);
-		fn_id = llvm_jit_get_fn_under_construction_id(jit_ctx);
-		assert(fn_id >= 0);
+		llvm_build_expr_list_init(jit_ctx, src_regs_idx, tgt_regs_idx);
 		for (i = 0, item = list->a; i < expr_cnt; ++i, ++item) {
 			assert(item);
 
@@ -4707,13 +4710,22 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 				}
 			}
 		}
+		build_ctx = jit_ctx->build_ctx;
+		assert(build_ctx);
+		fn_id = build_ctx->fn_id;
+		assert(fn_id >= 0);
+		col_ref_meta = build_ctx->col_ref_meta;
+		col_ref_meta_cnt = build_ctx->col_ref_meta_cnt;
+		assert(col_ref_meta_cnt >= 0);
+		assert(!col_ref_meta_cnt || col_ref_meta);
 		if (!llvm_build_expr_list_fin(jit_ctx)) {
 			parse_ctx->is_aborted = true;
 			return -1;
 		}
-		sqlVdbeAddOp1(vdbe, OP_ExecJITCompiledExprList, fn_id);
-		VdbeComment((vdbe, "Machine code for pushing result set expression "
-				"list"));
+		sqlVdbeAddOp4(vdbe, OP_ExecJITCompiledExprList, fn_id,
+			      col_ref_meta_cnt, 0, (const char *)col_ref_meta,
+			      P4_PTR);
+		VdbeComment((vdbe, "Callback for pushing result set expression list"));
 		vdbe->llvm_jit_enabled = true;
 		return expr_cnt;
 	}
@@ -4731,14 +4743,16 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 				--i;
 				--expr_cnt;
 			} else {
-				sqlVdbeAddOp2(vdbe, copy_op, j + src_regs - 1,
+				sqlVdbeAddOp2(vdbe, copy_op,
+					      j + src_regs_idx - 1,
 					      tgt_regs_idx + i);
 			}
 		} else if ((flags & SQL_ECEL_FACTOR) != 0
 			   && sqlExprIsConstant(expr)) {
 			sqlExprCodeAtInit(parse_ctx, expr, tgt_regs_idx + i, 0);
 		} else {
-			int reg = sqlExprCodeTarget(parse_ctx, expr, tgt_regs_idx + i);
+			int reg = sqlExprCodeTarget(parse_ctx, expr,
+						    tgt_regs_idx + i);
 			if (reg != tgt_regs_idx + i) {
 				VdbeOp *op;
 

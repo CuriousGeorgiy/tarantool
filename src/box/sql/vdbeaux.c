@@ -2231,7 +2231,6 @@ sqlVdbeDelete(Vdbe * p)
 	p->db = 0;
 	free(p->var_pos);
 	if (p->llvm_jit_enabled) {
-		assert(p->llvm_jit_ctx);
 		llvm_jit_ctx_delete(p->llvm_jit_ctx);
 		p->llvm_jit_ctx = NULL;
 	}
