@@ -60,13 +60,13 @@ struct llvm_col_ref_meta {
 	/** Basic block at which OP_Column code ends. */
 	LLVMBasicBlockRef bb_end;
 	/** Cursor number local variable. */
-	LLVMValueRef llvm_tab_var;
+	LLVMValueRef llvm_tab;
 	/** Store instruction into the cursor number local variable. */
 	LLVMValueRef llvm_tab_store;
 	/** Cursor number. */
 	int tab;
 	/** Column number local variable. */
-	LLVMValueRef llvm_col_var;
+	LLVMValueRef llvm_col;
 	/** Store instruction into the column number local variable. */
 	LLVMValueRef llvm_col_store;
 	/** Column number */
