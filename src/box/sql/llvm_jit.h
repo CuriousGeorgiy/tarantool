@@ -49,6 +49,32 @@ enum {
 	JIT_MIN_TUPLE_CNT = 1
 };
 
+/** Metadata for patching OP_Column code. */
+struct llvm_col_ref_meta {
+	/** Current callback function under construction. */
+	LLVMValueRef llvm_fn;
+	/** VDBE registers array. */
+	LLVMValueRef llvm_regs;
+	/** Basic block where OP_Column code starts. */
+	LLVMBasicBlockRef bb_begin;
+	/** Basic block at which OP_Column code ends. */
+	LLVMBasicBlockRef bb_end;
+	/** Cursor number local variable. */
+	LLVMValueRef llvm_tab;
+	/** Store instruction into the cursor number local variable. */
+	LLVMValueRef llvm_tab_store;
+	/** Cursor number. */
+	int tab;
+	/** Column number local variable. */
+	LLVMValueRef llvm_col;
+	/** Store instruction into the column number local variable. */
+	LLVMValueRef llvm_col_store;
+	/** Column number */
+	int col;
+	/** Target register's index. */
+	int tgt_reg_idx;
+};
+
 /**
  * LLVM construction context used to hold useful information during construction
  * of expression lists.
@@ -80,6 +106,14 @@ struct llvm_build_ctx {
 	LLVMValueRef llvm_tgt_reg_idx;
 	/** VDBE target register for current expression. */
 	LLVMValueRef llvm_tgt_reg;
+	/**
+	 * Array for each column reference compiled. Ownership after build
+	 * stage is transferred to the corresponding VdbeOp. Allocated as a
+	 * power of 2 in the parsing context's region.
+	 */
+	struct llvm_col_ref_meta *col_ref_meta;
+	/** Size of 'col_ref_meta' array. */
+	int col_ref_meta_cnt;
 };
 
 /**
@@ -160,8 +194,15 @@ llvm_jit_fin(struct llvm_jit_ctx *jit_ctx);
  * instead of it.
  */
 void
-llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
+llvm_jit_change_col_refs_to_reg_copies(struct llvm_jit_ctx *jit_ctx,
+				       struct llvm_col_ref_meta *col_ref_meta,
+				       int col_ref_meta_cnt, int tab,
+				       int coro_src_regs_idx);
 
-/** Verify the LLVM module, containing constructed callback functions. */
-bool
-llvm_jit_verify(struct llvm_jit_ctx *jit_ctx);
+/**
+ * Patch cursor and column numbers for columns referring to indices.
+ */
+void
+llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
+			    struct llvm_col_ref_meta *col_ref_meta,
+			    int col_ref_meta_cnt);

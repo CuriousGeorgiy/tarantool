@@ -541,6 +541,179 @@ llvm_jit_fin(struct llvm_jit_ctx *jit_ctx)
 	return true;
 }
 
+void
+llvm_jit_change_col_refs_to_reg_copies(struct llvm_jit_ctx *jit_ctx,
+				       struct llvm_col_ref_meta *col_ref_meta,
+				       int col_ref_meta_cnt, int tab,
+				       int coro_src_regs_idx)
+{
+	assert(jit_ctx);
+	assert(col_ref_meta_cnt >= 0);
+	assert(tab >= 0);
+	assert(coro_src_regs_idx >= 0);
+
+	int i;
+	struct llvm_col_ref_meta *p;
+	for (i = 0, p = col_ref_meta; i < col_ref_meta_cnt; ++i, ++p) {
+		assert(p);
+
+		LLVMBasicBlockRef op_col_begin_bb;
+		LLVMBasicBlockRef op_col_end_bb;
+		LLVMValueRef op_col_end_val;
+		LLVMBasicBlockRef pred_bb;
+		LLVMBasicBlockRef bb;
+		LLVMValueRef br_instr;
+		int col;
+		int coro_src_reg_idx;
+		int tgt_reg_idx;
+		struct llvm_build_ctx *build_ctx;
+		LLVMBuilderRef b;
+		LLVMValueRef llvm_fn;
+		LLVMValueRef llvm_regs;
+
+		if (p->tab != tab)
+			continue;
+		op_col_begin_bb = p->bb_begin;
+		assert(op_col_begin_bb);
+		pred_bb = LLVMGetPreviousBasicBlock(op_col_begin_bb);
+		assert(pred_bb);
+		br_instr = LLVMGetLastInstruction(pred_bb);
+		assert(br_instr);
+		ALWAYS(LLVMIsABranchInst(br_instr));
+		LLVMInstructionEraseFromParent(br_instr);
+		br_instr = NULL;
+		build_ctx = jit_ctx->build_ctx;
+		assert(build_ctx);
+		llvm_fn = build_ctx->llvm_fn = p->llvm_fn;
+		assert(llvm_fn);
+		b = build_ctx->builder;
+		assert(b);
+		LLVMPositionBuilderAtEnd(b, pred_bb);
+		op_col_end_bb = p->bb_end;
+		assert(op_col_end_bb);
+		assert(op_col_begin_bb != op_col_end_bb);
+		bb = LLVMGetPreviousBasicBlock(op_col_begin_bb);
+		assert(bb);
+		pred_bb = NULL;
+		do {
+			bb = LLVMGetNextBasicBlock(bb);
+			assert(bb);
+			if (pred_bb)
+				LLVMDeleteBasicBlock(pred_bb);
+			pred_bb = bb;
+		} while (bb != op_col_end_bb);
+		p->bb_begin = NULL;
+		op_col_end_val = LLVMBasicBlockAsValue(op_col_end_bb);
+		assert(op_col_end_val);
+		LLVMSetValueName2(op_col_end_val, "aux", strlen("aux"));
+		col = p->col;
+		assert(col >= 0);
+		coro_src_reg_idx = coro_src_regs_idx + col;
+		tgt_reg_idx = p->tgt_reg_idx;
+		assert(tgt_reg_idx > 0);
+		llvm_regs = build_ctx->llvm_regs = p->llvm_regs;
+		assert(llvm_regs);
+		llvm_build_mem_copy(build_ctx, coro_src_reg_idx, tgt_reg_idx);
+		ALWAYS(LLVMBuildBr(b, op_col_end_bb));
+	}
+}
+
+void
+llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
+			    struct llvm_col_ref_meta *col_ref_meta,
+			    int col_ref_meta_cnt)
+{
+	assert(jit_ctx);
+	assert(where_lvl);
+
+	struct llvm_build_ctx *build_ctx;
+	LLVMBuilderRef b;
+	WhereLoop *where_loop;
+	int curr_tab;
+	int idx;
+	int i;
+	struct llvm_col_ref_meta *p;
+
+	build_ctx = jit_ctx->build_ctx;
+	assert(build_ctx);
+	b = build_ctx->builder;
+	assert(b);
+	where_loop = where_lvl->pWLoop;
+	assert(where_loop);
+	curr_tab = where_lvl->iTabCur;
+	assert(curr_tab >= 0);
+	idx = where_lvl->iIdxCur;
+	assert(idx >= 0);
+	i = 0;
+	p = col_ref_meta;
+	for (; i < col_ref_meta_cnt; ++i, ++p) {
+		assert(p);
+
+		int tab;
+		LLVMValueRef llvm_idx;
+		LLVMValueRef llvm_tab;
+		LLVMValueRef llvm_tab_store;
+		LLVMBasicBlockRef bb;
+		struct index_def *idx_def;
+		uint32_t j;
+		struct key_part *key_part;
+
+		tab = p->tab;
+		assert(tab >= 0);
+		if (tab != curr_tab)
+			continue;
+		p->tab = idx;
+		llvm_idx = LLVMConstInt(LLVMInt32Type(), idx, false);
+		assert(llvm_idx);
+		llvm_tab = p->llvm_tab;
+		assert(llvm_tab);
+		llvm_tab_store = p->llvm_tab_store;
+		assert(llvm_tab_store);
+		bb = p->bb_begin;
+		assert(bb);
+		LLVMPositionBuilder(b, bb, llvm_tab_store);
+		p->llvm_tab_store = LLVMBuildStore(b, llvm_idx, llvm_tab);
+		assert(p->llvm_tab_store);
+		LLVMInstructionEraseFromParent(llvm_tab_store);
+		llvm_tab_store = NULL;
+		if (!(where_loop->wsFlags & WHERE_AUTO_INDEX))
+			continue;
+		idx_def = where_loop->index_def;
+		assert(idx_def);
+		struct key_def *key_def = idx_def->key_def;
+		assert(key_def);
+		uint32_t part_cnt = key_def->part_count;
+		for (j = 0, key_part = key_def->parts; j < part_cnt; ++j, ++key_part) {
+			assert(key_part);
+
+			int col;
+
+			col = p->col;
+			assert(col >= 0);
+			if (key_part->fieldno == (uint32_t)col) {
+				LLVMValueRef llvm_eph_idx_col;
+				LLVMValueRef llvm_col;
+				LLVMValueRef llvm_col_store;
+
+				p->col = (int)j;
+				llvm_eph_idx_col =
+					LLVMConstInt(LLVMInt32Type(), j, false);
+				llvm_col = p->llvm_col;
+				assert(llvm_col);
+				llvm_col_store = p->llvm_col_store;
+				assert(llvm_col_store);
+				LLVMPositionBuilder(b, bb, llvm_col_store);
+				p->llvm_col_store =
+					LLVMBuildStore(b, llvm_eph_idx_col, llvm_col);
+				assert(p->llvm_col_store);
+				LLVMInstructionEraseFromParent(llvm_col_store);
+				llvm_col_store = NULL;
+				break;
+			}
+		}
+	}
+}
+
 static bool
 llvm_load_bootstrap_module(void)
 {
@@ -853,6 +1026,25 @@ build_col_ref(struct llvm_build_ctx *build_ctx)
 	LLVMValueRef llvm_fn;
 	LLVMTypeRef llvm_fn_type;
 	unsigned int llvm_fn_args_cnt;
+	LLVMValueRef llvm_curr_fn;
+	LLVMBasicBlockRef curr_bb;
+	LLVMBasicBlockRef op_col_begin_bb;
+	LLVMBasicBlockRef op_col_end_bb;
+	LLVMValueRef llvm_vdbe;
+	LLVMValueRef llvm_tab;
+	LLVMValueRef llvm_tab_imm;
+	LLVMValueRef llvm_tab_store;
+	LLVMValueRef llvm_col;
+	LLVMValueRef llvm_col_imm;
+	LLVMValueRef llvm_col_store;
+	LLVMValueRef llvm_rc;
+	int i;
+	struct yColCache *p;
+	struct region *region;
+	int col_ref_meta_cnt;
+	struct llvm_col_ref_meta curr_col_ref_meta;
+	struct llvm_col_ref_meta *col_ref_meta;
+	size_t col_ref_meta_sz;
 
 	m = build_ctx->module;
 	assert(m);
