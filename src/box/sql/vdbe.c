@@ -412,6 +412,82 @@ vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 	return 0;
 }
 
+int
+vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx)
+{
+	assert(vdbe);
+
+	struct vdbe_field_ref *field_ref;
+	struct Mem *tgt_reg;
+
+	field_ref = (struct vdbe_field_ref *)vdbe->aMem[field_ref_reg_idx].u.p;
+	tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
+	if (vdbe_field_ref_fetch(field_ref, field_idx, tgt_reg) != 0)
+		return -1;
+	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
+	return 0;
+}
+
+int
+vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx)
+{
+	assert(vdbe);
+	assert(tab >= 0 && tab < vdbe->nCursor);
+	assert(col >= 0);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+
+	VdbeCursor *vdbe_csr;
+	struct Mem *tgt_reg;
+
+	vdbe_csr = vdbe->apCsr[tab];
+	assert(vdbe_csr);
+	assert(col < vdbe_csr->nField);
+	assert(vdbe_csr->eCurType != CURTYPE_PSEUDO || vdbe_csr->nullRow);
+	assert(vdbe_csr->eCurType != CURTYPE_SORTER);
+	tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
+	if (vdbe_csr->cacheStatus != vdbe->cacheCtr) {
+		if (vdbe_csr->nullRow) {
+			if (vdbe_csr->eCurType == CURTYPE_PSEUDO) {
+				assert(vdbe_csr->uc.pseudoTableReg > 0);
+
+				Mem *reg;
+
+				reg = &vdbe->aMem[vdbe_csr->uc.pseudoTableReg];
+				assert(mem_is_bin(reg));
+				assert(memIsValid(reg));
+				vdbe_field_ref_prepare_data(&vdbe_csr->field_ref,
+							    reg->z, reg->n);
+			} else {
+				goto op_column_out;
+			}
+		} else {
+			assert(vdbe_csr->eCurType == CURTYPE_TARANTOOL);
+
+			BtCursor *btree_csr;
+
+			btree_csr = vdbe_csr->uc.pCursor;
+			assert(btree_csr);
+			assert(sqlCursorIsValid(btree_csr));
+			assert(btree_csr->curFlags & BTCF_TaCursor ||
+			       btree_csr->curFlags & BTCF_TEphemCursor);
+			vdbe_field_ref_prepare_tuple(&vdbe_csr->field_ref,
+						     btree_csr->last_tuple);
+		}
+		vdbe_csr->cacheStatus = vdbe->cacheCtr;
+	}
+	enum field_type field_type = field_type_MAX;
+	if (vdbe_csr->eCurType == CURTYPE_TARANTOOL)
+		field_type = vdbe_csr->uc.pCursor->space->def->fields[col].type;
+	else if (vdbe_csr->eCurType == CURTYPE_SORTER)
+		field_type = vdbe_sorter_get_field_type(vdbe_csr->uc.pSorter, col);
+	if (vdbe_field_ref_fetch(&vdbe_csr->field_ref, col, tgt_reg) != 0)
+		return -1;
+	tgt_reg->field_type = field_type;
+op_column_out:
+	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
+	return 0;
+}
+
 /*
  * Execute as much of a VDBE program as we can.
  * This is the core of sql_step().
