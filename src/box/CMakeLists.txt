@@ -63,7 +63,6 @@ set(sql_sources
     sql/update.c
     sql/util.c
     sql/vdbe.c
-    sql/vdbe_jit.c
     sql/vdbeapi.c
     sql/vdbeaux.c
     sql/vdbemem.c
@@ -76,10 +75,10 @@ set(sql_sources
 )
 
 find_package(LLVM REQUIRED CONFIG)
-llvm_map_components_to_libnames(llvm_libs core mcjit ipo orcjit executionengine interpreter mc AllTargetsAsmParsers support nativecodegen)
-separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND ${LLVM_DEFINITIONS})
-add_definitions(${LLVM_DEFINITIONS_LIST})
-include_directories(/usr/include/llvm-c-10)
+include_directories(${LLVM_INCLUDE_DIR})
+separate_arguments(llvm_definitions_list NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${llvm_definitions_list})
+llvm_map_components_to_libnames(llvm_libs core native orcjit)
 
 add_custom_target(box_generate_lua_sources
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/src/box

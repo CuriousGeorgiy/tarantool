@@ -1071,9 +1071,6 @@ struct LookasideSlot {
 	LookasideSlot *pNext;	/* Next buffer in the list of free buffers */
 };
 
-int
-llvm_init();
-
 /*
  * Each database connection is an instance of the following structure.
  */
@@ -1115,7 +1112,7 @@ struct sql {
 	Lookaside lookaside;	/* Lookaside malloc configuration */
 	Hash aFunc;		/* Hash table of connection functions */
 
-	bool vdbe_jit_init; /* True if LLVM JIT has been already initialized. */
+	bool llvm_session_init; /* True if LLVM JIT has been initialized. */
 };
 
 /*
@@ -1134,8 +1131,6 @@ struct sql {
 #define SQL_AutoIndex      0x00100000	/* Enable automatic indexes */
 #define SQL_EnableTrigger  0x01000000	/* True to enable triggers */
 #define SQL_DeferFKs       0x02000000	/* Defer all FK constraints */
-#define SQL_VdbeJIT        0x04000000	/* VDBE may use LLVM JIT to speed up
-					 * execution of byte-code. */
 #define SQL_VdbeEQP        0x08000000	/* Debug EXPLAIN QUERY PLAN */
 #define SQL_FullMetadata   0x04000000	/* Display optional properties
 					 * (nullability, autoincrement, alias)
@@ -1417,7 +1412,6 @@ struct AggInfo {
 		 * Register, holding ephemeral's space pointer.
 		 */
 		int reg_eph;
-		bool is_jitted;
 	} *aFunc;
 	int nFunc;		/* Number of entries in aFunc[] */
 };
@@ -2208,8 +2202,10 @@ struct Parse {
 	/* Id of field with <AUTOINCREMENT>. */
 	uint32_t autoinc_fieldno;
 	bool initiateTTrans;	/* Initiate Tarantool transaction */
+	/** True if LLVM JIT compilation should not be used. */
 	bool avoid_jit;
-	struct jit_compile_context *jit_context;
+	/** Context for LLVM JIT compilation and execution of bytecode. */
+	struct llvm_jit_ctx *llvm_jit_ctx;
 	/** If set - do not emit byte code at all, just parse.  */
 	bool parse_only;
 	/** Type of parsed_ast member. */
@@ -2617,9 +2613,6 @@ sql_normalized_name_region_new(struct region *r, const char *name, int len);
 
 int sqlKeywordCode(const unsigned char *, int);
 int sqlRunParser(Parse *, const char *);
-
-struct jit_compile_context *
-parse_get_jit_context(struct Parse *parse);
 
 /**
  * This routine is called after a single SQL statement has been

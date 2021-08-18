@@ -554,7 +554,6 @@ sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region)
 	int rc, column_count = sql_column_count(stmt);
 	rmean_collect(rmean_box, IPROTO_EXECUTE, 1);
 	if (column_count > 0) {
-		sql_set_port(stmt, port);
 		/* Either ROW or DONE or ERROR. */
 		while ((rc = sql_step(stmt)) == SQL_ROW) {
 			if (sql_row_to_port(stmt, region, port) != 0)

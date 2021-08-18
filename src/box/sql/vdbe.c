@@ -49,7 +49,6 @@
 #include "mem.h"
 #include "vdbeInt.h"
 #include "tarantoolInt.h"
-#include "vdbe_jit.h"
 
 #include "msgpuck/msgpuck.h"
 #include "mpstream/mpstream.h"

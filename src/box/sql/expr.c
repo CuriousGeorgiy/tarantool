@@ -40,8 +40,6 @@
 #include "box/schema.h"
 #include "box/session.h"
 
-#include "vdbe_jit.h"
-
 /* Forward declarations */
 static void exprCodeBetween(Parse *, Expr *, int,
 			    void (*)(Parse *, Expr *, int, int), int);
