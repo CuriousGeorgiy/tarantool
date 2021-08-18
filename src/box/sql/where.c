@@ -1911,7 +1911,7 @@ whereLoopCheaperProperSubset(const WhereLoop * pX,	/* First WhereLoop to compare
 		if (j < 0)
 			return 0;	/* X not a subset of Y since term X[i] not used by Y */
 	}
-  	if ((pX->wsFlags & WHERE_IDX_ONLY) != 0 
+  	if ((pX->wsFlags & WHERE_IDX_ONLY) != 0
 		&& (pY->wsFlags & WHERE_IDX_ONLY) == 0) {
     	return 0;  /* Constraint (5) */
   	}

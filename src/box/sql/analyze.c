@@ -284,7 +284,7 @@ statInit(sql_context * context, int argc, sql_value ** argv)
 	assert(nCol > 0);
 	/* Tarantool: we use an additional artificial column for the reason
 	 * that Tarantool's indexes don't contain PK columns after key columns.
-	 * Hence, in order to correctly gather statistics when dealing with 
+	 * Hence, in order to correctly gather statistics when dealing with
 	 * identical rows, we have to use this artificial column.
 	 */
 	nColUp = sizeof(tRowcnt) < 8 ? (nCol + 2) & ~1 : nCol + 1;
