@@ -131,7 +131,7 @@ llvm_build_agg_column(struct llvm_build_ctx *ctx);
 
 /** Build a column reference value. */
 static bool
-build_col_ref(struct llvm_build_ctx *build_ctx);
+llvm_build_col_ref(struct llvm_build_ctx *build_ctx);
 
 /** Build an integer value. */
 static bool
