@@ -665,7 +665,7 @@ llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
 		p->tab = idx;
 		llvm_idx = LLVMConstInt(LLVMInt32Type(), idx, false);
 		assert(llvm_idx);
-		llvm_tab = p->llvm_tab;
+		llvm_tab = p->llvm_tab_var;
 		assert(llvm_tab);
 		llvm_tab_store = p->llvm_tab_store;
 		assert(llvm_tab_store);
@@ -698,7 +698,7 @@ llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
 				p->col = (int)j;
 				llvm_eph_idx_col =
 					LLVMConstInt(LLVMInt32Type(), j, false);
-				llvm_col = p->llvm_col;
+				llvm_col = p->llvm_col_var;
 				assert(llvm_col);
 				llvm_col_store = p->llvm_col_store;
 				assert(llvm_col_store);
