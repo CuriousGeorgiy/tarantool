@@ -758,6 +758,8 @@ sql_row_trigger_program(struct Parse *parser, struct sql_trigger *trigger,
 	pSubParse->pToplevel = pTop;
 	pSubParse->eTriggerOp = trigger->op;
 	pSubParse->nQueryLoop = parser->nQueryLoop;
+	/* FIXME: how should we hold llvm_jit_context's for sub-programs? */
+	pSubParse->avoid_jit = true;
 
 	/* Temporary VM. */
 	struct Vdbe *v = sqlGetVdbe(pSubParse);
