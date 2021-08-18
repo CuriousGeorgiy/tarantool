@@ -5407,7 +5407,6 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 		if (pList) {
 			nArg = pList->nExpr;
 			regAgg = sqlGetTempRange(pParse, nArg);
-			pParse->avoid_jit = true;
 			sqlExprCodeExprList(pParse, pList, regAgg, 0,
 						SQL_ECEL_DUP);
 		} else {
