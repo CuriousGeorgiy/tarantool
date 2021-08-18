@@ -1821,6 +1821,8 @@ static bool
 llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col)
 {
 	assert(ctx);
+	assert(tab >= 0);
+	assert(col >= 0);
 
 	LLVMModuleRef m;
 	LLVMContextRef m_ctx;
@@ -1861,9 +1863,6 @@ llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col)
 	assert(b);
 	expr = ctx->expr;
 	assert(expr);
-	tab = expr->iTable;
-	col = expr->iColumn;
-	assert(col >= 0);
 	parse_ctx = ctx->parse_ctx;
 	assert(parse_ctx);
 	llvm_vdbe = ctx->llvm_vdbe;
