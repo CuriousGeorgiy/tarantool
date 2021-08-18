@@ -412,6 +412,38 @@ vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 	return 0;
 }
 
+int
+vdbe_op_next(Vdbe *vdbe, int csr, int res, int event_cntr)
+{
+	assert(vdbe != NULL);
+	assert(csr >= 0 && csr < vdbe->nCursor);
+	assert(res == 0 || res == 1);
+	testcase(res == 1);
+	assert(event_cntr < ArraySize(vdbe->aCounter));
+
+	static int n = 0;
+	++n;
+	VdbeCursor *vdbe_csr = vdbe->apCsr[csr];
+	assert(vdbe_csr != NULL);
+	assert(vdbe_csr->eCurType == CURTYPE_TARANTOOL);
+
+	if (sqlCursorNext(vdbe_csr->uc.pCursor, &res) != 0)
+		return -1;
+	vdbe_csr->cacheStatus = CACHE_STALE;
+	VdbeBranchTaken(res==0,2);
+	if (res == 0) {
+		vdbe_csr->nullRow = 0;
+		vdbe->aCounter[event_cntr]++;
+#ifdef SQL_TEST
+		sql_search_count++;
+#endif
+		return 1;
+	} else {
+		vdbe_csr->nullRow = 1;
+	}
+	return 0;
+}
+
 void
 vdbe_op_realify(Vdbe *vdbe, int tgt_reg_idx)
 {
@@ -504,6 +536,83 @@ vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx)
 		return -1;
 	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
 	return 0;
+}
+
+sql_context *
+vdbe_op_aggstep0(Vdbe *vdbe, struct func *func, int argc)
+{
+	assert(vdbe);
+	assert(func);
+	assert(argc >= 0);
+
+	sql *db;
+	sql_context *ctx;
+
+	db = vdbe->db;
+	assert(db);
+	ctx = sqlDbMallocRawNN(db, sizeof(sql_context) + (argc - 1) * sizeof(sql_value *));
+	if (!ctx) {
+		sqlOomFault(db);
+		return NULL;
+	}
+	ctx->pMem = 0;
+	ctx->func = func;
+	ctx->pVdbe = vdbe;
+	ctx->argc = argc;
+	return ctx;
+}
+
+int
+vdbe_op_aggstep(Vdbe *vdbe, sql_context *sql_ctx, int acc_reg_idx, int arg_regs_idx)
+{
+	assert(vdbe != NULL);
+	assert(sql_ctx != NULL);
+	assert(acc_reg_idx >= 0);
+	assert(arg_regs_idx >= 0);
+
+	int i;
+	Mem *acc_reg;
+	Mem res_reg;
+
+	assert(vdbe->aMem != NULL);
+	acc_reg = &vdbe->aMem[acc_reg_idx];
+	if (sql_ctx->pMem != acc_reg) {
+		sql_ctx->pMem = acc_reg;
+		for(i = sql_ctx->argc - 1; i >= 0; --i) {
+			sql_ctx->argv[i] = &vdbe->aMem[arg_regs_idx + i];
+		}
+	}
+#ifdef SQL_DEBUG
+	for(i = 0; i < sql_ctx->argc; ++i) {
+		assert(memIsValid(sql_ctx->argv[i]));
+		REGISTER_TRACE(vdbe, arg_regs_idx + i, sql_ctx->argv[i]);
+	}
+#endif
+	acc_reg->n++;
+	mem_create(&res_reg);
+	sql_ctx->pOut = &res_reg;
+	sql_ctx->is_aborted = false;
+	sql_ctx->skipFlag = 0;
+	assert(sql_ctx->func->def->language == FUNC_LANGUAGE_SQL_BUILTIN);
+	struct func_sql_builtin *func = (struct func_sql_builtin *)sql_ctx->func;
+	func->call(sql_ctx, sql_ctx->argc, sql_ctx->argv);
+	if (sql_ctx->is_aborted) {
+		mem_destroy(&res_reg);
+		return -1;
+	}
+	assert(mem_is_null(&res_reg));
+	assert(sql_ctx->skipFlag == 0);
+	return 0;
+}
+
+void
+vdbe_op_aggfinal(Vdbe *vdbe, sql_context *sql_ctx)
+{
+	assert(vdbe != NULL);
+	assert(sql_ctx != NULL);
+
+	assert(vdbe->db != NULL);
+	sqlDbFree(vdbe->db, sql_ctx);
 }
 
 /*
