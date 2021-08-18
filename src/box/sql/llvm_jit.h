@@ -108,12 +108,22 @@ struct llvm_build_ctx {
 	LLVMValueRef llvm_tgt_reg;
 	/**
 	 * Array for each column reference compiled. Ownership after build
-	 * stage is transferred to the corresponding VdbeOp. Allocated as a
-	 * power of 2 in the parsing context's region.
+	 * stage is transferred to the corresponding VdbeOp. May be used to patch
+	 * column references' table and column number or even change the OP_Column
+	 * block of code to an OP_Copy in @sqlWhereEnd. Allocated as a
+	 * power of 2 in parsing context's region.
 	 */
 	struct llvm_col_ref_meta *col_ref_meta;
 	/** Size of 'col_ref_meta' array. */
 	int col_ref_meta_cnt;
+	/**
+	 * Array for each aggregate function compiled. Each element references
+	 * a 'sql_context' structure in LLVM IR. Allocated once in parsing
+	 * context's region.
+	 */
+	LLVMValueRef *llvm_agg_sql_ctx;
+	/** Basic block where the aggregate query loop starts. */
+	LLVMBasicBlockRef agg_loop_bb;
 };
 
 /**
@@ -127,8 +137,8 @@ struct llvm_jit_ctx {
 	/** Whether the module pends to be compiled. */
 	bool compiled;
 	/**
-	 * Build context: allocated at the current parsing context's region
-	 * when llvm_build_expr_list_init is called.
+	 * Build context: allocated once in parsing context's region
+	 * when 'llvm_jit_ctx_new' is called.
 	 */
 	struct llvm_build_ctx *build_ctx;
 	/**
