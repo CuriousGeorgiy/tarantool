@@ -4675,7 +4675,7 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 			}
 			parse_ctx->llvm_jit_ctx = jit_ctx;
 		}
-		llvm_build_expr_list_init(jit_ctx, src_regs_idx, tgt_regs_idx);
+		llvm_build_expr_list_ini(jit_ctx, src_regs_idx, tgt_regs_idx);
 		for (i = 0, item = list->a; i < expr_cnt; ++i, ++item) {
 			assert(item);
 

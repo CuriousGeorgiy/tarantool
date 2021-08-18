@@ -347,67 +347,20 @@ llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx)
 }
 
 void
-llvm_build_expr_list_init(struct llvm_jit_ctx *jit_ctx, int src_regs, int tgt_regs)
+llvm_build_expr_list_ini(struct llvm_jit_ctx *jit_ctx, int src_regs_idx,
+			 int tgt_regs_idx)
 {
 	assert(jit_ctx);
-	assert(src_regs >= 0);
-	assert(tgt_regs > 0);
+	assert(src_regs_idx >= 0);
+	assert(tgt_regs_idx > 0);
 
-	LLVMModuleRef m;
-	LLVMTargetDataRef td;
-	LLVMBuilderRef b;
 	struct llvm_build_ctx *build_ctx;
-	int fn_id;
-	LLVMValueRef llvm_fn;
-	const char *fn_name;
-	LLVMTypeRef llvm_fn_type;
-	LLVMTypeRef fn_param_types[1];
-	LLVMBasicBlockRef entry_bb;
-	LLVMValueRef llvm_vdbe;
-	u32 vdbe_aMem_idx;
-	LLVMValueRef llvm_regs_ptr;
-	LLVMValueRef llvm_regs;
 
-	m = jit_ctx->module;
-	assert(m);
-	td = LLVMGetModuleDataLayout(m);
-	assert(td);
 	build_ctx = jit_ctx->build_ctx;
 	assert(build_ctx);
-	fn_id = build_ctx->fn_id = jit_ctx->cnt++;
-	assert(fn_id >= 0);
-	b = build_ctx->builder;
-	assert(b);
-	assert(fn_id >= 0);
-	build_ctx->src_regs_idx = src_regs;
-	build_ctx->tgt_regs_idx = tgt_regs;
-	assert(llvm_vdbe_ptr_type);
-	fn_param_types[0] = llvm_vdbe_ptr_type;
-	llvm_fn_type = LLVMFunctionType(LLVMInt1Type(), fn_param_types,
-				   lengthof(fn_param_types), false);
-	/*
-	 * FIXME: is it actually safe to pass the function name in such a
-	 * manner?
-	 */
-	fn_name = tt_sprintf("%s%d", fn_name_prefix, build_ctx->fn_id);
-	assert(fn_name);
-	llvm_fn = build_ctx->llvm_fn = LLVMAddFunction(m, fn_name, llvm_fn_type);
-	assert(llvm_fn);
-	LLVMSetLinkage(llvm_fn, LLVMExternalLinkage);
-	LLVMSetVisibility(llvm_fn, LLVMDefaultVisibility);
-	entry_bb = LLVMAppendBasicBlock(llvm_fn, "entry");
-	assert(entry_bb);
-	LLVMPositionBuilderAtEnd(b, entry_bb);
-	llvm_vdbe = build_ctx->llvm_vdbe = LLVMGetParam(llvm_fn, 0);
-	assert(llvm_vdbe);
-	vdbe_aMem_idx = LLVMElementAtOffset(td, llvm_vdbe_type,
-					    offsetof(Vdbe, aMem));
-	llvm_regs_ptr = LLVMBuildStructGEP2(b, llvm_vdbe_type, llvm_vdbe,
-					    vdbe_aMem_idx, "regs_ptr");
-	assert(llvm_regs_ptr);
-	llvm_regs = build_ctx->llvm_regs =
-		LLVMBuildLoad2(b, llvm_mem_ptr_type, llvm_regs_ptr, "regs");
-	assert(llvm_regs);
+	llvm_build_cb_ini(jit_ctx);
+	build_ctx->src_regs_idx = src_regs_idx;
+	build_ctx->tgt_regs_idx = tgt_regs_idx;
 }
 
 bool

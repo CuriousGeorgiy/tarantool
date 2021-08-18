@@ -163,7 +163,7 @@ llvm_jit_ctx_delete(struct llvm_jit_ctx *ctx);
 
 /** Initialize the llvm_build_ctx state. */
 void
-llvm_build_expr_list_init(struct llvm_jit_ctx *jit_ctx, int src_regs, int tgt_regs);
+llvm_build_expr_list_ini(struct llvm_jit_ctx *jit_ctx, int src_regs_idx, int tgt_regs_idx);
 
 /** Build expression list item. */
 bool
