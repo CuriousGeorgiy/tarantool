@@ -1413,7 +1413,7 @@ struct AggInfo {
 		 * Register, holding ephemeral's space pointer.
 		 */
 		int reg_eph;
-		bool is_jitted;
+		bool jit_compiled;
 	} *aFunc;
 	int nFunc;		/* Number of entries in aFunc[] */
 };
