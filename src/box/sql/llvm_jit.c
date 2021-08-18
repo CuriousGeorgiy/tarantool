@@ -126,6 +126,9 @@ llvm_lljit_add_module(struct llvm_jit_ctx *jit_ctx);
 static bool
 llvm_build_expr(struct llvm_build_ctx *ctx);
 
+static bool
+llvm_build_agg_column(struct llvm_build_ctx *ctx);
+
 /** Build a column reference value. */
 static bool
 build_col_ref(struct llvm_build_ctx *build_ctx);
@@ -149,6 +152,9 @@ llvm_build_str(struct llvm_build_ctx *build_ctx, const char *z);
 /** Build a null value. */
 static void
 llvm_build_null(struct llvm_build_ctx *ctx);
+
+static bool
+llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col);
 
 /** Build a call to mem_copy and check its return code */
 static void
@@ -983,8 +989,10 @@ llvm_build_expr(struct llvm_build_ctx *ctx)
 	assert(expr);
 	op = !expr ? TK_NULL : expr->op;
 	switch (op) {
+	case TK_AGG_COLUMN:
+		return llvm_build_agg_column(ctx);
 	case TK_COLUMN_REF:
-		return build_col_ref(ctx);
+		return llvm_build_col_ref(ctx);
 	case TK_INTEGER:
 		return llvm_build_int(ctx, false);
 	case TK_TRUE:
@@ -1010,7 +1018,78 @@ llvm_build_expr(struct llvm_build_ctx *ctx)
 }
 
 static bool
-build_col_ref(struct llvm_build_ctx *build_ctx)
+llvm_build_agg_column(struct llvm_build_ctx *ctx)
+{
+	assert(ctx);
+
+	Expr *expr;
+	AggInfo *agg_info;
+	struct AggInfo_col *agg_info_col;
+
+	expr = ctx->expr;
+	assert(expr);
+	agg_info = expr->pAggInfo;
+	assert(agg_info);
+	assert(expr->iAgg >= 0);
+	agg_info_col = &agg_info->aCol[expr->iAgg];
+	if (!agg_info->directMode) {
+		assert(agg_info_col->iMem > 0);
+
+		int tgt_reg_idx;
+
+		tgt_reg_idx = ctx->tgt_reg_idx;
+		assert(tgt_reg_idx > 0);
+		if (agg_info_col->iMem == tgt_reg_idx)
+			return true;
+		llvm_build_mem_copy(ctx, agg_info_col->iMem, tgt_reg_idx);
+		return true;
+	} else if (agg_info->useSortingIdx) {
+		struct space_def *space_def;
+
+		space_def = agg_info_col->space_def;
+		assert(space_def);
+		assert(agg_info->sortingIdxPTab >= 0);
+		assert(agg_info_col->iSorterColumn >= 0);
+
+		if (!llvm_build_vdbe_op_column(ctx, agg_info->sortingIdxPTab,
+					       agg_info_col->iSorterColumn))
+			return false;
+		if (space_def->fields[expr->iAgg].type == FIELD_TYPE_NUMBER) {
+			LLVMModuleRef m;
+			LLVMBuilderRef b;
+			LLVMValueRef llvm_vdbe;
+			LLVMValueRef llvm_tgt_reg_idx;
+			LLVMValueRef llvm_fn;
+			LLVMTypeRef llvm_fn_type;
+			LLVMValueRef llvm_fn_args[2];
+			unsigned int llvm_fn_args_cnt;
+
+			m = ctx->module;
+			assert(m);
+			b = ctx->builder;
+			assert(b);
+			llvm_vdbe = ctx->llvm_vdbe;
+			assert(llvm_vdbe);
+			llvm_tgt_reg_idx = ctx->llvm_tgt_reg_idx;
+			assert(llvm_tgt_reg_idx);
+			llvm_fn = llvm_get_fn(m, llvm_vdbe_op_realify);
+			assert(llvm_fn);
+			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+			assert(llvm_fn_type);
+			llvm_fn_args[0] = llvm_vdbe;
+			llvm_fn_args[1] = llvm_tgt_reg_idx;
+			llvm_fn_args_cnt = lengthof(llvm_fn_args);
+			ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
+					      llvm_fn_args, llvm_fn_args_cnt, ""));
+			return true;
+		}
+		return true;
+	}
+	return llvm_build_col_ref(ctx);
+}
+
+static bool
+llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 {
 	assert(build_ctx);
 
@@ -1021,32 +1100,12 @@ build_col_ref(struct llvm_build_ctx *build_ctx)
 	int tab;
 	int col;
 	Parse *parse_ctx;
-	LLVMValueRef llvm_regs;
 	LLVMValueRef llvm_tgt_reg;
 	LLVMValueRef llvm_tgt_reg_idx;
-	int tgt_reg_idx;
-	LLVMValueRef llvm_fn;
-	LLVMTypeRef llvm_fn_type;
-	unsigned int llvm_fn_args_cnt;
-	LLVMValueRef llvm_curr_fn;
-	LLVMBasicBlockRef curr_bb;
-	LLVMBasicBlockRef op_col_begin_bb;
-	LLVMBasicBlockRef op_col_end_bb;
 	LLVMValueRef llvm_vdbe;
-	LLVMValueRef llvm_tab;
-	LLVMValueRef llvm_tab_imm;
-	LLVMValueRef llvm_tab_store;
-	LLVMValueRef llvm_col;
-	LLVMValueRef llvm_col_imm;
-	LLVMValueRef llvm_col_store;
 	LLVMValueRef llvm_rc;
 	int i;
 	struct yColCache *p;
-	struct region *region;
-	int col_ref_meta_cnt;
-	struct llvm_col_ref_meta curr_col_ref_meta;
-	struct llvm_col_ref_meta *col_ref_meta;
-	size_t col_ref_meta_sz;
 
 	m = build_ctx->module;
 	assert(m);
@@ -1069,14 +1128,14 @@ build_col_ref(struct llvm_build_ctx *build_ctx)
 	assert(llvm_tgt_reg_idx);
 	if (tab < 0) {
 		if (parse_ctx->vdbe_field_ref_reg > 0) {
-			LLVMTargetDataRef td;
 			int vdbe_field_ref_reg_idx;
 			LLVMValueRef llvm_vdbe_field_ref_reg_idx;
 			LLVMValueRef llvm_field_idx;
+			LLVMValueRef llvm_fn;
+			LLVMTypeRef llvm_fn_type;
 			LLVMValueRef llvm_fn_args[4];
+			unsigned int llvm_fn_args_cnt;
 
-			td = LLVMGetModuleDataLayout(m);
-			assert(td);
 			vdbe_field_ref_reg_idx = parse_ctx->vdbe_field_ref_reg;
 			assert(vdbe_field_ref_reg_idx >= 0);
 			llvm_vdbe_field_ref_reg_idx =
@@ -1109,139 +1168,25 @@ build_col_ref(struct llvm_build_ctx *build_ctx)
 			tab = parse_ctx->iSelfTab;
 		}
 	}
-	llvm_regs = curr_col_ref_meta.llvm_regs = build_ctx->llvm_regs;
-	assert(llvm_regs);
 	for (i = 0, p = parse_ctx->aColCache; i < parse_ctx->nColCache; ++i, ++p) {
 		if (p->iTable == tab && p->iColumn == col) {
 			p->lru = parse_ctx->iCacheCnt++;
 			assert(p->lru >= 0);
 			assert(p->iReg > 0);
 
-			LLVMValueRef llvm_idx;
-			const char *name;
-			LLVMValueRef llvm_cached_column_reg;
-			LLVMValueRef llvm_fn_args[2];
+			int tgt_reg_idx;
 
+			p->lru = parse_ctx->iCacheCnt++;
 			sqlExprCachePinRegister(parse_ctx, p->iReg);
-			llvm_idx = LLVMConstInt(LLVMInt64Type(), p->iReg, false);
-			assert(llvm_idx);
-			name = "cached_col_reg";
-			llvm_cached_column_reg =
-				LLVMBuildInBoundsGEP2(b, llvm_mem_type,
-						      llvm_regs, &llvm_idx, 1,
-						      name);
-			assert(llvm_cached_column_reg);
-			/* FIXME: copy operation depending on SQL_ECEL_DUP */
-			llvm_fn = llvm_get_fn(m, llvm_mem_copy);
-			assert(llvm_fn);
-			llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-			assert(llvm_fn_type);
-			llvm_fn_args[0] = llvm_tgt_reg;
-			llvm_fn_args[1] =llvm_cached_column_reg;
-			llvm_fn_args_cnt = lengthof(llvm_fn_args);
-			llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
-						 llvm_fn_args, llvm_fn_args_cnt, "");
-			llvm_build_rc_check(build_ctx, llvm_rc);
+			tgt_reg_idx = build_ctx->tgt_reg_idx;
+			assert(tgt_reg_idx > 0);
+			if (p->iReg == tgt_reg_idx)
+				return true;
+			llvm_build_mem_copy(build_ctx, p->iReg, tgt_reg_idx);
 			return true;
 		}
 	}
-
-	LLVMValueRef llvm_fn_args[4];
-
-	llvm_curr_fn = curr_col_ref_meta.llvm_fn = build_ctx->llvm_fn;
-	assert(llvm_curr_fn);
-	curr_bb =  LLVMGetInsertBlock(b);
-	assert(curr_bb);
-	op_col_begin_bb = curr_col_ref_meta.bb_begin =
-		LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_begin");
-	assert(op_col_begin_bb);
-	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_begin_bb);
-	LLVMBuildBr(b, op_col_begin_bb);
-	LLVMPositionBuilderAtEnd(b, op_col_begin_bb);
-	curr_col_ref_meta.tab = tab;
-	curr_col_ref_meta.col = col;
-	llvm_tab = curr_col_ref_meta.llvm_tab =
-		LLVMBuildAlloca(b, LLVMInt32Type(), "tab");
-	assert(llvm_tab);
-	llvm_tab_imm = LLVMConstInt(LLVMInt32Type(), tab, false);
-	assert(llvm_tab_imm);
-	llvm_tab_store = curr_col_ref_meta.llvm_tab_store =
-		LLVMBuildStore(b, llvm_tab_imm, llvm_tab);
-	assert(llvm_tab_store);
-	llvm_tab = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_tab, "");
-	llvm_col = curr_col_ref_meta.llvm_col =
-		LLVMBuildAlloca(b, LLVMInt32Type(), "col");
-	assert(llvm_col);
-	llvm_col_imm = LLVMConstInt(LLVMInt32Type(), col, false);
-	assert(llvm_col_imm);
-	llvm_col_store = curr_col_ref_meta.llvm_col_store =
-		LLVMBuildStore(b, llvm_col_imm, llvm_col);
-	assert(llvm_col_store);
-	llvm_col = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_col, "");
-	tgt_reg_idx = build_ctx->tgt_reg_idx;
-	assert(tgt_reg_idx > 0);
-	curr_col_ref_meta.tgt_reg_idx = tgt_reg_idx;
-	llvm_fn = llvm_get_fn(m, llvm_vdbe_op_column);
-	assert(llvm_fn);
-	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
-	assert(llvm_fn_type);
-	llvm_fn_args[0] = llvm_vdbe;
-	llvm_fn_args[1] = llvm_tab;
-	llvm_fn_args[2] = llvm_col;
-	llvm_fn_args[3] = llvm_tgt_reg_idx;
-	llvm_fn_args_cnt = lengthof(llvm_fn_args);
-	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-				 llvm_fn_args_cnt, "rc");
-	assert(llvm_rc);
-	llvm_build_rc_check(build_ctx, llvm_rc);
-	curr_bb = LLVMGetInsertBlock(b);
-	op_col_end_bb = curr_col_ref_meta.bb_end =
-		LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_end");
-	assert(op_col_end_bb);
-	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_end_bb);
-	LLVMBuildBr(b, op_col_end_bb);
-	LLVMPositionBuilderAtEnd(b, op_col_end_bb);
-	if (!expr->op2)
-		sqlExprCacheStore(parse_ctx, tab, col, tgt_reg_idx);
-	col_ref_meta_cnt = build_ctx->col_ref_meta_cnt;
-	assert(col_ref_meta_cnt >= 0);
-	col_ref_meta = build_ctx->col_ref_meta;
-	if (!col_ref_meta_cnt) {
-		assert(!col_ref_meta);
-		region = &parse_ctx->region;
-		col_ref_meta = region_alloc_array(region,
-						  typeof(struct llvm_col_ref_meta),
-						  1, &col_ref_meta_sz);
-		if (!col_ref_meta)
-			goto region_alloc_err;
-	} else if (IsPowerOfTwo(col_ref_meta_cnt)) {
-		assert(col_ref_meta);
-		region = &parse_ctx->region;
-		col_ref_meta = region_alloc_array(region,
-						  typeof(struct llvm_col_ref_meta),
-						  col_ref_meta_cnt << 1,
-						  &col_ref_meta_sz);
-		if (!col_ref_meta)
-			goto region_alloc_err;
-		memcpy(col_ref_meta, build_ctx->col_ref_meta,
-		       col_ref_meta_cnt * sizeof(struct llvm_col_ref_meta));
-		/*
-		 * FIXME: is it okay that we do not clean up previously
-		 * allocated memory?
-		 */
-	}
-	if (col_ref_meta != build_ctx->col_ref_meta) {
-		assert(col_ref_meta);
-		build_ctx->col_ref_meta = col_ref_meta;
-	}
-	col_ref_meta[build_ctx->col_ref_meta_cnt++] = curr_col_ref_meta;
-	return true;
-
-region_alloc_err:
-	diag_set(OutOfMemory, col_ref_meta_sz, "region_alloc_array",
-		 "struct col_ref_meta");
-	parse_ctx->is_aborted = true;
-	return false;
+	return llvm_build_vdbe_op_column(build_ctx, tab, col);
 }
 
 static bool
@@ -1495,6 +1440,159 @@ llvm_build_null(struct llvm_build_ctx *ctx)
 	llvm_fn_args[0] = llvm_tgt_reg;
 	llvm_fn_args_cnt = lengthof(llvm_fn_args);
 	ALWAYS(LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args, llvm_fn_args_cnt, ""));
+}
+
+static bool
+llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col)
+{
+	assert(ctx);
+
+	LLVMModuleRef m;
+	LLVMContextRef m_ctx;
+	LLVMBuilderRef b;
+	Expr *expr;
+	Parse *parse_ctx;
+	LLVMValueRef llvm_regs;
+	LLVMValueRef llvm_tgt_reg;
+	LLVMValueRef llvm_tgt_reg_idx;
+	int tgt_reg_idx;
+	LLVMValueRef llvm_fn;
+	LLVMTypeRef llvm_fn_type;
+	LLVMValueRef llvm_fn_args[4];
+	unsigned int llvm_fn_args_cnt;
+	LLVMValueRef llvm_curr_fn;
+	LLVMBasicBlockRef curr_bb;
+	LLVMBasicBlockRef op_col_begin_bb;
+	LLVMBasicBlockRef op_col_end_bb;
+	LLVMValueRef llvm_vdbe;
+	LLVMValueRef llvm_tab_var;
+	LLVMValueRef llvm_tab_imm;
+	LLVMValueRef llvm_tab_store;
+	LLVMValueRef llvm_col_var;
+	LLVMValueRef llvm_col_imm;
+	LLVMValueRef llvm_col_store;
+	LLVMValueRef llvm_rc;
+	struct region *region;
+	int col_ref_meta_cnt;
+	struct llvm_col_ref_meta curr_col_ref_meta;
+	struct llvm_col_ref_meta *col_ref_meta;
+	size_t col_ref_meta_sz;
+
+	m = ctx->module;
+	assert(m);
+	m_ctx = LLVMGetModuleContext(m);
+	assert(m_ctx);
+	b = ctx->builder;
+	assert(b);
+	expr = ctx->expr;
+	assert(expr);
+	tab = expr->iTable;
+	col = expr->iColumn;
+	assert(col >= 0);
+	parse_ctx = ctx->parse_ctx;
+	assert(parse_ctx);
+	llvm_vdbe = ctx->llvm_vdbe;
+	assert(llvm_vdbe);
+	llvm_tgt_reg = ctx->llvm_tgt_reg;
+	assert(llvm_tgt_reg);
+	llvm_tgt_reg_idx = ctx->llvm_tgt_reg_idx;
+	assert(llvm_tgt_reg_idx);
+	llvm_regs = curr_col_ref_meta.llvm_regs = ctx->llvm_regs;
+	assert(llvm_regs);
+	tgt_reg_idx = ctx->tgt_reg_idx;
+	assert(tgt_reg_idx > 0);
+	llvm_curr_fn = curr_col_ref_meta.llvm_fn = ctx->llvm_fn;
+	assert(llvm_curr_fn);
+	curr_bb =  LLVMGetInsertBlock(b);
+	assert(curr_bb);
+	op_col_begin_bb = curr_col_ref_meta.bb_begin =
+	LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_begin");
+	assert(op_col_begin_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_begin_bb);
+	LLVMBuildBr(b, op_col_begin_bb);
+	LLVMPositionBuilderAtEnd(b, op_col_begin_bb);
+	curr_col_ref_meta.tab = tab;
+	curr_col_ref_meta.col = col;
+	llvm_tab_var = curr_col_ref_meta.llvm_tab_var =
+		LLVMBuildAlloca(b, LLVMInt32Type(), "tab");
+	assert(llvm_tab_var);
+	llvm_tab_imm = LLVMConstInt(LLVMInt32Type(), tab, false);
+	assert(llvm_tab_imm);
+	llvm_tab_store = curr_col_ref_meta.llvm_tab_store =
+	LLVMBuildStore(b, llvm_tab_imm, llvm_tab_var);
+	assert(llvm_tab_store);
+	llvm_tab_var = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_tab_var, "");
+	llvm_col_var = curr_col_ref_meta.llvm_col_var =
+		LLVMBuildAlloca(b, LLVMInt32Type(), "col");
+	assert(llvm_col_var);
+	llvm_col_imm = LLVMConstInt(LLVMInt32Type(), col, false);
+	assert(llvm_col_imm);
+	llvm_col_store = curr_col_ref_meta.llvm_col_store =
+	LLVMBuildStore(b, llvm_col_imm, llvm_col_var);
+	assert(llvm_col_store);
+	llvm_col_var = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_col_var, "");
+	curr_col_ref_meta.tgt_reg_idx = tgt_reg_idx;
+	llvm_fn = llvm_get_fn(m, llvm_vdbe_op_column);
+	assert(llvm_fn);
+	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
+	assert(llvm_fn_type);
+	llvm_fn_args[0] = llvm_vdbe;
+	llvm_fn_args[1] = llvm_tab_var;
+	llvm_fn_args[2] = llvm_col_var;
+	llvm_fn_args[3] = llvm_tgt_reg_idx;
+	llvm_fn_args_cnt = lengthof(llvm_fn_args);
+	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
+				 llvm_fn_args_cnt, "rc");
+	assert(llvm_rc);
+	llvm_build_rc_check(ctx, llvm_rc);
+	curr_bb = LLVMGetInsertBlock(b);
+	op_col_end_bb = curr_col_ref_meta.bb_end =
+	LLVMCreateBasicBlockInContext(m_ctx, "OP_Column_end");
+	assert(op_col_end_bb);
+	LLVMInsertExistingBasicBlockAfterInsertBlock(b, op_col_end_bb);
+	LLVMBuildBr(b, op_col_end_bb);
+	LLVMPositionBuilderAtEnd(b, op_col_end_bb);
+	if (!expr->op2)
+		sqlExprCacheStore(parse_ctx, tab, col, tgt_reg_idx);
+	col_ref_meta_cnt = ctx->col_ref_meta_cnt;
+	assert(col_ref_meta_cnt >= 0);
+	col_ref_meta = ctx->col_ref_meta;
+	if (!col_ref_meta_cnt) {
+		assert(!col_ref_meta);
+		region = &parse_ctx->region;
+		col_ref_meta = region_alloc_array(region,
+						  typeof(struct llvm_col_ref_meta),
+						  1, &col_ref_meta_sz);
+		if (!col_ref_meta)
+			goto region_alloc_err;
+	} else if (IsPowerOfTwo(col_ref_meta_cnt)) {
+		assert(col_ref_meta);
+		region = &parse_ctx->region;
+		col_ref_meta = region_alloc_array(region,
+						  typeof(struct llvm_col_ref_meta),
+						  col_ref_meta_cnt << 1,
+						  &col_ref_meta_sz);
+		if (!col_ref_meta)
+			goto region_alloc_err;
+		memcpy(col_ref_meta, ctx->col_ref_meta,
+		       col_ref_meta_cnt * sizeof(struct llvm_col_ref_meta));
+		/*
+		 * FIXME: is it okay that we do not clean up previously
+		 * allocated memory?
+		 */
+	}
+	if (col_ref_meta != ctx->col_ref_meta) {
+		assert(col_ref_meta);
+		ctx->col_ref_meta = col_ref_meta;
+	}
+	col_ref_meta[ctx->col_ref_meta_cnt++] = curr_col_ref_meta;
+	return true;
+
+region_alloc_err:
+	diag_set(OutOfMemory, col_ref_meta_sz, "region_alloc_array",
+		 "struct col_ref_meta");
+	parse_ctx->is_aborted = true;
+	return false;
 }
 
 static void
