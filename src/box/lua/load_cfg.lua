@@ -108,7 +108,7 @@ local default_cfg = {
     feedback_interval     = 3600,
     net_msg_max           = 768,
     sql_cache_size        = 5 * 1024 * 1024,
-    jit_enabled           = false
+    sql_jit_is_enabled           = false
 }
 
 -- cfg variables which are covered by modules
@@ -214,7 +214,7 @@ local template_cfg = {
     feedback_interval     = ifdef_feedback('number'),
     net_msg_max           = 'number',
     sql_cache_size        = 'number',
-    jit_enabled           = 'boolean',
+    sql_jit_is_enabled           = 'boolean',
 }
 
 local function normalize_uri(port)
@@ -335,7 +335,7 @@ local dynamic_cfg = {
     replicaset_uuid         = check_replicaset_uuid,
     net_msg_max             = private.cfg_set_net_msg_max,
     sql_cache_size          = private.cfg_set_sql_cache_size,
-    jit_enabled             = private.cfg_set_jit_enabled,
+    sql_jit_is_enabled      = private.cfg_set_sql_jit_is_enabled,
 }
 
 ifdef_feedback = nil -- luacheck: ignore

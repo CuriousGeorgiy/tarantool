@@ -1867,12 +1867,12 @@ box_set_crash(void)
 	return 0;
 }
 
-int box_set_jit_enabled(void)
+int box_set_sql_jit_is_enabled(void)
 {
     struct session *session = current_session();
     if (session == NULL)
         return -1;
-    if (cfg_getb("jit_enabled")) {
+    if (cfg_getb("sql_jit_is_enabled")) {
         /* SQL_VdbeJIT */
         session->sql_flags |= 0x00000008;
     } else {

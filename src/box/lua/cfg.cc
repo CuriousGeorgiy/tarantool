@@ -400,9 +400,9 @@ lbox_cfg_set_crash(struct lua_State *L)
 }
 
 static int
-lbox_cfg_set_jit_enabled(struct lua_State *L)
+lbox_cfg_set_sql_jit_is_enabled(struct lua_State *L)
 {
-    if (box_set_jit_enabled() != 0)
+    if (box_set_sql_jit_is_enabled() != 0)
         luaT_error(L);
     return 0;
 }
@@ -446,7 +446,7 @@ box_lua_cfg_init(struct lua_State *L)
 		{"cfg_set_net_msg_max", lbox_cfg_set_net_msg_max},
 		{"cfg_set_sql_cache_size", lbox_set_prepared_stmt_cache_size},
 		{"cfg_set_crash", lbox_cfg_set_crash},
-        {"cfg_set_jit_enabled", lbox_cfg_set_jit_enabled},
+        	{"cfg_set_sql_jit_is_enabled", lbox_cfg_set_sql_jit_is_enabled},
 		{NULL, NULL}
 	};
 
