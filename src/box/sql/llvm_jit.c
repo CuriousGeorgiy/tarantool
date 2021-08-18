@@ -180,7 +180,7 @@ llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col);
 /** Build a call to mem_copy and check its return code. */
 static void
 llvm_build_mem_copy(struct llvm_build_ctx *ctx, int src_reg_idx,
-		    int tgt_reg_idx);
+		    int dest_reg_idx);
 
 /** Build a return code check. */
 static void
@@ -1971,18 +1971,18 @@ llvm_build_vdbe_op_column(struct llvm_build_ctx *ctx, int tab, int col)
 
 static void
 llvm_build_mem_copy(struct llvm_build_ctx *ctx, int src_reg_idx,
-		    int tgt_reg_idx)
+		    int dest_reg_idx)
 {
 	assert(ctx);
 	assert(src_reg_idx >= 0);
-	assert(tgt_reg_idx >= 0);
+	assert(dest_reg_idx >= 0);
 
 	LLVMModuleRef m;
 	LLVMBuilderRef b;
 	LLVMValueRef llvm_src_reg_idx;
 	LLVMValueRef llvm_src_reg;
-	LLVMValueRef llvm_tgt_reg_idx;
-	LLVMValueRef llvm_tgt_reg;
+	LLVMValueRef llvm_dest_reg_idx;
+	LLVMValueRef llvm_dest_reg;
 	LLVMValueRef llvm_regs;
 	LLVMValueRef llvm_fn;
 	LLVMTypeRef llvm_fn_type;
@@ -2004,23 +2004,23 @@ llvm_build_mem_copy(struct llvm_build_ctx *ctx, int src_reg_idx,
 	llvm_src_reg = LLVMBuildInBoundsGEP2(b, llvm_mem_type, llvm_regs,
 					     &llvm_src_reg_idx, 1, name);
 	assert(llvm_src_reg);
-	llvm_tgt_reg_idx = LLVMConstInt(LLVMInt32Type(), tgt_reg_idx, false);
-	assert(llvm_tgt_reg_idx);
-	name = tt_sprintf("tgt_reg");
+	llvm_dest_reg_idx = LLVMConstInt(LLVMInt32Type(), dest_reg_idx, false);
+	assert(llvm_dest_reg_idx);
+	name = tt_sprintf("dest_reg");
 	assert(name);
-	llvm_tgt_reg = LLVMBuildInBoundsGEP2(b, llvm_mem_type, llvm_regs,
-					     &llvm_tgt_reg_idx, 1, name);
-	assert(llvm_tgt_reg);
+	llvm_dest_reg = LLVMBuildInBoundsGEP2(b, llvm_mem_type, llvm_regs,
+					      &llvm_dest_reg_idx, 1, name);
+	assert(llvm_dest_reg);
 	/* FIXME: copy operation can depend on SQL_ECEL_DUP */
 	llvm_fn = llvm_get_fn(m, llvm_mem_copy);
 	assert(llvm_fn);
 	llvm_fn_type = LLVMGetElementType(LLVMTypeOf(llvm_fn));
 	assert(llvm_fn_type);
-	llvm_fn_args[0] = llvm_tgt_reg;
+	llvm_fn_args[0] = llvm_dest_reg;
 	llvm_fn_args[1] = llvm_src_reg;
 	llvm_fn_args_cnt = lengthof(llvm_fn_args);
 	llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn, llvm_fn_args,
-				 llvm_fn_args_cnt, "llvm_rc");
+				 llvm_fn_args_cnt, "rc");
 	assert(llvm_rc);
 	llvm_build_rc_check(ctx, llvm_rc);
 }
