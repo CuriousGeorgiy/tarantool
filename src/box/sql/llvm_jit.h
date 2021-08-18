@@ -175,6 +175,10 @@ llvm_build_expr_list_item(struct llvm_jit_ctx *jit_ctx,
 bool
 llvm_build_expr_list_fin(struct llvm_jit_ctx *jit_ctx);
 
+bool
+llvm_build_agg_loop(struct llvm_jit_ctx *jit_ctx, WhereInfo *where_info,
+		    AggInfo *agg_info);
+
 /**
  * Execute the compiled expression list via the callback function:
  * push expression values to target registers.

@@ -38,9 +38,10 @@
 #include "mem.h"
 #include "vdbeInt.h"
 
-struct Mem mem_type;
 struct Vdbe vdbe_type;
 struct vdbe_field_ref vdbe_field_ref_type;
+struct Mem mem_type;
+struct func func_type;
 
 void *referenced_fns[] = {
 mem_copy,
