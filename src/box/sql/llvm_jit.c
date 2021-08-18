@@ -1375,35 +1375,35 @@ llvm_build_agg_column(struct llvm_build_ctx *ctx)
 
 	Expr *expr;
 	AggInfo *agg_info;
-	struct AggInfo_col *agg_info_col;
+	struct AggInfo_col *col;
 
 	expr = ctx->expr;
 	assert(expr);
 	agg_info = expr->pAggInfo;
 	assert(agg_info);
 	assert(expr->iAgg >= 0);
-	agg_info_col = &agg_info->aCol[expr->iAgg];
+	col = &agg_info->aCol[expr->iAgg];
 	if (!agg_info->directMode) {
-		assert(agg_info_col->iMem > 0);
+		assert(col->iMem > 0);
 
 		int tgt_reg_idx;
 
 		tgt_reg_idx = ctx->tgt_reg_idx;
 		assert(tgt_reg_idx > 0);
-		if (agg_info_col->iMem == tgt_reg_idx)
+		if (col->iMem == tgt_reg_idx)
 			return true;
-		llvm_build_mem_copy(ctx, agg_info_col->iMem, tgt_reg_idx);
+		llvm_build_mem_copy(ctx, col->iMem, tgt_reg_idx);
 		return true;
 	} else if (agg_info->useSortingIdx) {
 		struct space_def *space_def;
 
-		space_def = agg_info_col->space_def;
+		space_def = col->space_def;
 		assert(space_def);
 		assert(agg_info->sortingIdxPTab >= 0);
-		assert(agg_info_col->iSorterColumn >= 0);
+		assert(col->iSorterColumn >= 0);
 
 		if (!llvm_build_vdbe_op_column(ctx, agg_info->sortingIdxPTab,
-					       agg_info_col->iSorterColumn))
+					       col->iSorterColumn))
 			return false;
 		if (space_def->fields[expr->iAgg].type == FIELD_TYPE_NUMBER) {
 			LLVMModuleRef m;
