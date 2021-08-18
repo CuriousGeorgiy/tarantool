@@ -4733,6 +4733,115 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 	return 0;
 }
 
+void
+sqlWherePostEnd(WhereInfo *where_info)
+{
+	assert(where_info != NULL);
+
+	SrcList *tab_list = where_info->pTabList;
+	assert(tab_list != NULL);
+	Parse *parse_ctx = where_info->pParse;
+	assert(parse_ctx != NULL);
+	Vdbe *vdbe = parse_ctx->pVdbe;
+	assert(vdbe != NULL);
+	sql *db = parse_ctx->db;
+	assert(db != NULL);
+	int i;
+	WhereLevel *where_lvl;
+
+	assert(where_info->nLevel <= tab_list->nSrc);
+	for (i = 0, where_lvl = where_info->a; i < where_info->nLevel; i++, where_lvl++) {
+		struct SrcList_item *item = &tab_list->a[where_lvl->iFrom];
+		assert(item != NULL);
+		assert(item->space != NULL);
+		WhereLoop *where_loop = where_lvl->pWLoop;
+		assert(where_loop != NULL);
+		int k;
+		int last;
+		VdbeOp *pOp;
+
+		/* For a co-routine, change all OP_Column references to the table of
+		 * the co-routine into OP_Copy of result contained in a register.
+		 */
+		if (item->fg.viaCoroutine != 0u && !db->mallocFailed) {
+			translateColumnToCopy(vdbe, parse_ctx->llvm_jit_ctx,
+					      where_lvl->addrBody, where_lvl->iTabCur,
+					      item->regResult);
+			continue;
+		}
+
+		/* If this scan uses an index, make VDBE code substitutions to read data
+		 * from the index instead of from the table where possible.  In some cases
+		 * this optimization prevents the table from ever being read, which can
+		 * yield a significant performance boost.
+		 *
+		 * Calls to the code generator in between sqlWhereBegin and
+		 * sqlWhereEnd will have created code that references the table
+		 * directly.  This loop scans all that code looking for opcodes
+		 * that reference the table and converts them into opcodes that
+		 * reference the index.
+		 */
+		struct index_def *def = NULL;
+		if (where_loop->wsFlags & (WHERE_INDEXED | WHERE_IDX_ONLY)) {
+			def = where_loop->index_def;
+		} else if (where_loop->wsFlags & WHERE_MULTI_OR) {
+			def = where_lvl->u.pCovidx;
+		}
+		if (def != NULL && !db->mallocFailed) {
+			struct key_def *key_def = def->key_def;
+			uint32_t part_count = key_def->part_count;
+			uint32_t j;
+
+			last = sqlVdbeCurrentAddr(vdbe);
+			k = where_lvl->addrBody;
+			pOp = sqlVdbeGetOp(vdbe, k);
+			for (; k < last; k++, pOp++) {
+				if (pOp->opcode == OP_ExecJITCallback) {
+					llvm_jit_patch_idx_col_refs(parse_ctx->llvm_jit_ctx,
+								    where_lvl,
+								    pOp->p4.p,
+								    pOp->p2);
+					continue;
+				}
+				if (pOp->p1 != where_lvl->iTabCur)
+					continue;
+				if (pOp->opcode != OP_Column)
+					continue;
+				assert(def == NULL || def->space_id ==
+						      item->space->def->id);
+				int x = pOp->p2;
+				assert(x >= 0);
+				pOp->p1 = where_lvl->iIdxCur;
+				if ((where_loop->wsFlags & WHERE_AUTO_INDEX) == 0) {
+					pOp->p2 = x;
+					continue;
+				}
+				/*
+				 * In case we are using ephemeral index, the
+				 * space that will be used to get the values
+				 * will be ephemeral index. Since the opcode
+				 * OP_Column uses the position of the fields
+				 * according to the original space, and the
+				 * fields may be in other positions in the
+				 * ephemeral index, we must correct the P2 of
+				 * OP_Column. To get the positions of these
+				 * fields in ephemeral index, we use the index
+				 * definition we created.
+				 */
+				for (j = 0; j < part_count; ++j) {
+					if ((int)key_def->parts[j].fieldno == x)
+						pOp->p2 = j;
+				}
+			}
+		}
+	}
+
+	/* Final cleanup
+	 */
+	parse_ctx->nQueryLoop = where_info->savedNQueryLoop;
+	whereInfoFree(db, where_info);
+}
+
 /*
  * Generate the end of the WHERE loop.  See comments on
  * sqlWhereBegin() for additional information.
@@ -4746,7 +4855,6 @@ sqlWhereEnd(WhereInfo * pWInfo)
 	WhereLevel *pLevel;
 	WhereLoop *pLoop;
 	SrcList *pTabList = pWInfo->pTabList;
-	sql *db = pParse->db;
 
 	/* Generate loop termination code.
 	 */
@@ -4826,92 +4934,5 @@ sqlWhereEnd(WhereInfo * pWInfo)
 	 */
 	sqlVdbeResolveLabel(v, pWInfo->iBreak);
 
-	assert(pWInfo->nLevel <= pTabList->nSrc);
-	for (i = 0, pLevel = pWInfo->a; i < pWInfo->nLevel; i++, pLevel++) {
-		int k, last;
-		VdbeOp *pOp;
-		struct SrcList_item *pTabItem = &pTabList->a[pLevel->iFrom];
-		assert(pTabItem->space != NULL);
-		pLoop = pLevel->pWLoop;
-
-		/* For a co-routine, change all OP_Column references to the table of
-		 * the co-routine into OP_Copy of result contained in a register.
-		 */
-		if (pTabItem->fg.viaCoroutine && !db->mallocFailed) {
-			translateColumnToCopy(v, pParse->llvm_jit_ctx,
-					      pLevel->addrBody, pLevel->iTabCur,
-					      pTabItem->regResult);
-			continue;
-		}
-
-		/* If this scan uses an index, make VDBE code substitutions to read data
-		 * from the index instead of from the table where possible.  In some cases
-		 * this optimization prevents the table from ever being read, which can
-		 * yield a significant performance boost.
-		 *
-		 * Calls to the code generator in between sqlWhereBegin and
-		 * sqlWhereEnd will have created code that references the table
-		 * directly.  This loop scans all that code looking for opcodes
-		 * that reference the table and converts them into opcodes that
-		 * reference the index.
-		 */
-		struct index_def *def = NULL;
-		if (pLoop->wsFlags & (WHERE_INDEXED | WHERE_IDX_ONLY)) {
-			def = pLoop->index_def;
-		} else if (pLoop->wsFlags & WHERE_MULTI_OR) {
-			def = pLevel->u.pCovidx;
-		}
-		if (def != NULL && !db->mallocFailed) {
-			last = sqlVdbeCurrentAddr(v);
-			k = pLevel->addrBody;
-			pOp = sqlVdbeGetOp(v, k);
-			for (; k < last; k++, pOp++) {
-				if (pOp->opcode == OP_ExecJITCompiledExprList) {
-					llvm_jit_patch_idx_col_refs(pParse->llvm_jit_ctx,
-								    pLevel,
-								    pOp->p4.p,
-								    pOp->p2);
-					continue;
-				}
-				if (pOp->p1 != pLevel->iTabCur)
-					continue;
-				if (pOp->opcode != OP_Column)
-					continue;
-				assert(def == NULL || def->space_id ==
-						      pTabItem->space->def->id);
-				int x = pOp->p2;
-				assert(x >= 0);
-				pOp->p1 = pLevel->iIdxCur;
-				if ((pLoop->wsFlags & WHERE_AUTO_INDEX) == 0) {
-					pOp->p2 = x;
-					continue;
-				}
-				/*
-				 * In case we are using ephemeral index, the
-				 * space that will be used to get the values
-				 * will be ephemeral index. Since the opcode
-				 * OP_Column uses the position of the fields
-				 * according to the original space, and the
-				 * fields may be in other positions in the
-				 * ephemeral index, we must correct the P2 of
-				 * OP_Column. To get the positions of these
-				 * fields in ephemeral index, we use the index
-				 * definition we created.
-				 */
-				struct key_def *key_def =
-					pLevel->pWLoop->index_def->key_def;
-				uint32_t part_count = key_def->part_count;
-				for (uint32_t i = 0; i < part_count; ++i) {
-					if ((int)key_def->parts[i].fieldno == x)
-						pOp->p2 = i;
-				}
-			}
-		}
-	}
-
-	/* Final cleanup
-	 */
-	pParse->nQueryLoop = pWInfo->savedNQueryLoop;
-	whereInfoFree(db, pWInfo);
-	return;
+	sqlWherePostEnd(pWInfo);
 }
