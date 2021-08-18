@@ -35,6 +35,7 @@
  */
 #include "coll/coll.h"
 #include "sqlInt.h"
+#include "llvm_jit.h"
 #include "tarantoolInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -6507,18 +6508,37 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					sql_expr_list_delete(db, pDel);
 					goto select_end;
 				}
-				updateAccumulator(pParse, &sAggInfo);
-				assert(pMinMax == 0 || pMinMax->nExpr == 1);
-				if (sqlWhereIsOrdered(pWInfo) > 0) {
-					sqlVdbeGoto(v,
-							sqlWhereBreakLabel
-							(pWInfo));
-					VdbeComment((v, "%s() by index",
-						     (flag ==
-						      WHERE_ORDERBY_MIN ? "min"
-						      : "max")));
+				if (agg_loop_can_be_jit_compiled(pParse, pWInfo,
+								 &sAggInfo)) {
+					struct llvm_jit_ctx *jit_ctx =
+						pParse->llvm_jit_ctx;
+					if (jit_ctx == NULL) {
+						jit_ctx = llvm_jit_ctx_new(pParse);
+						if (jit_ctx == NULL) {
+							pParse->is_aborted = true;
+							goto select_end;
+						}
+						pParse->llvm_jit_ctx = jit_ctx;
+					}
+					if (!llvm_build_agg_loop(jit_ctx, pWInfo,
+								 &sAggInfo)) {
+						pParse->is_aborted = true;
+						goto select_end;
+					}
+				} else {
+					updateAccumulator(pParse, &sAggInfo);
+					assert(pMinMax == 0 || pMinMax->nExpr == 1);
+					if (sqlWhereIsOrdered(pWInfo) > 0) {
+						sqlVdbeGoto(v,
+							    sqlWhereBreakLabel
+							    (pWInfo));
+						VdbeComment((v, "%s() by index",
+						(flag ==
+						WHERE_ORDERBY_MIN ? "min"
+						: "max")));
+					}
+					sqlWhereEnd(pWInfo);
 				}
-				sqlWhereEnd(pWInfo);
 				finalizeAggFunctions(pParse, &sAggInfo);
 				sql_expr_list_delete(db, pDel);
 			}
