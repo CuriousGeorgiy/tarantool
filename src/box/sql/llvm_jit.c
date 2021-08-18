@@ -820,8 +820,8 @@ llvm_load_bootstrap_module(void)
 	return true;
 }
 
-static
-void llvm_diag_handler(LLVMDiagnosticInfoRef di, void *unused) {
+static void
+llvm_diag_handler(LLVMDiagnosticInfoRef di, void *unused) {
 	assert(di);
 	(void)unused;
 
