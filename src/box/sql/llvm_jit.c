@@ -1153,9 +1153,8 @@ llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 			llvm_fn_args[2] = llvm_field_idx;
 			llvm_fn_args[3] = llvm_tgt_reg_idx;
 			llvm_fn_args_cnt = lengthof(llvm_fn_args);
-			llvm_rc =
-				LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
-					       llvm_fn_args, llvm_fn_args_cnt, "rc");
+			llvm_rc = LLVMBuildCall2(b, llvm_fn_type, llvm_fn,
+						 llvm_fn_args, llvm_fn_args_cnt, "rc");
 			assert(llvm_rc);
 			llvm_build_rc_check(build_ctx, llvm_rc);
 			return true;
