@@ -1169,7 +1169,6 @@ llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 	}
 	for (i = 0, p = parse_ctx->aColCache; i < parse_ctx->nColCache; ++i, ++p) {
 		if (p->iTable == tab && p->iColumn == col) {
-			p->lru = parse_ctx->iCacheCnt++;
 			assert(p->lru >= 0);
 			assert(p->iReg > 0);
 
