@@ -67,8 +67,9 @@ static LLVMValueRef llvm_mem_set_int;
 static LLVMValueRef llvm_mem_set_bool;
 static LLVMValueRef llvm_mem_set_double;
 static LLVMValueRef llvm_mem_set_str0_static;
-static LLVMValueRef llvm_vdbe_op_fetch;
+static LLVMValueRef llvm_vdbe_op_realify;
 static LLVMValueRef llvm_vdbe_op_column;
+static LLVMValueRef llvm_vdbe_op_fetch;
 
 /** LLVM Orc LLJIT instance. */
 static LLVMOrcLLJITRef llvm_lljit;
@@ -741,8 +742,9 @@ llvm_load_bootstrap_module(void)
 	{ "mem_set_bool", &llvm_mem_set_bool },
 	{ "mem_set_double", &llvm_mem_set_double },
 	{ "mem_set_str0_static", &llvm_mem_set_str0_static },
-	{ "vdbe_op_fetch", &llvm_vdbe_op_fetch },
+	{ "vdbe_op_realify", &llvm_vdbe_op_realify },
 	{ "vdbe_op_column", &llvm_vdbe_op_column },
+	{ "vdbe_op_fetch", &llvm_vdbe_op_fetch },
 	};
 
 	len = lengthof(llvm_jit_bootstrap_bin);
