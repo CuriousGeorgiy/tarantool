@@ -682,7 +682,7 @@ translateColumnToCopy(Vdbe *vdbe, struct llvm_jit_ctx *jit_ctx, int start_addr,
 	vdbe_op = sqlVdbeGetOp(vdbe, start_addr);
 	finish_addr = sqlVdbeCurrentAddr(vdbe);
 	for (; start_addr < finish_addr; ++start_addr, ++vdbe_op) {
-		if (vdbe_op->opcode == OP_ExecJITCompiledExprList) {
+		if (vdbe_op->opcode == OP_ExecJITCallback) {
 			assert(jit_ctx);
 			llvm_jit_change_col_refs_to_reg_copies(jit_ctx,
 							       vdbe_op->p4.p,

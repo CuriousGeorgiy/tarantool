@@ -4722,9 +4722,8 @@ sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
 			parse_ctx->is_aborted = true;
 			return -1;
 		}
-		sqlVdbeAddOp4(vdbe, OP_ExecJITCompiledExprList, fn_id,
-			      col_ref_meta_cnt, 0, (const char *)col_ref_meta,
-			      P4_PTR);
+		sqlVdbeAddOp4(vdbe, OP_ExecJITCallback, fn_id, col_ref_meta_cnt,
+			      0, (const char *)col_ref_meta, P4_PTR);
 		VdbeComment((vdbe, "Callback for pushing result set expression list"));
 		vdbe->llvm_jit_enabled = true;
 		return expr_cnt;

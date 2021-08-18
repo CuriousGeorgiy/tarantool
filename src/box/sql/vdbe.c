@@ -4327,7 +4327,7 @@ case OP_LoadAnalysis: {
  *
  * P1 contains the JIT compiled function id.
  */
-case OP_ExecJITCompiledExprList:
+case OP_ExecJITCallback:
 	assert(pOp->p1 >= 0);
 	if (!llvm_exec_compiled_expr_list(p->llvm_jit_ctx, pOp->p1, p))
 		goto abort_due_to_error;
