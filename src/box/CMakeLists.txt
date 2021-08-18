@@ -21,10 +21,7 @@ lua_source(lua_sources lua/xlog.lua)
 lua_source(lua_sources lua/key_def.lua)
 lua_source(lua_sources lua/merger.lua)
 set(bin_sources)
-bin_source(bin_sources bootstrap.snap bootstrap.h)
-
-add_library(jit_types STATIC sql/jit_types.c)
-target_compile_options(jit_types PUBLIC -emit-llvm)
+bin_source(bin_sources ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap.snap ${CMAKE_CURRENT_BINARY_DIR}/bootstrap.h)
 
 set(sql_sources
     sql/opcodes.c

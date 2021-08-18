@@ -72,8 +72,6 @@ endfunction()
 
 function(bin_source varname srcfile dstfile)
     set(var ${${varname}})
-    set (srcfile "${CMAKE_CURRENT_SOURCE_DIR}/${srcfile}")
-    set (dstfile "${CMAKE_CURRENT_BINARY_DIR}/${dstfile}")
     set(${varname} ${var} "${dstfile}" PARENT_SCOPE)
     set (tmpfile "${dstfile}.tmp")
     get_filename_component(module ${dstfile} NAME_WE)
