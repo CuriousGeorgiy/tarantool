@@ -673,7 +673,7 @@ llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
 		p->tab = idx;
 		llvm_idx = LLVMConstInt(LLVMInt32Type(), idx, false);
 		assert(llvm_idx);
-		llvm_tab = p->llvm_tab;
+		llvm_tab = p->llvm_tab_var;
 		assert(llvm_tab);
 		llvm_tab_store = p->llvm_tab_store;
 		assert(llvm_tab_store);
@@ -706,7 +706,7 @@ llvm_jit_patch_idx_col_refs(struct llvm_jit_ctx *jit_ctx, WhereLevel *where_lvl,
 				p->col = (int)j;
 				llvm_eph_idx_col =
 					LLVMConstInt(LLVMInt32Type(), j, false);
-				llvm_col = p->llvm_col;
+				llvm_col = p->llvm_col_var;
 				assert(llvm_col);
 				llvm_col_store = p->llvm_col_store;
 				assert(llvm_col_store);
@@ -1242,7 +1242,7 @@ llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 	LLVMPositionBuilderAtEnd(b, op_col_begin_bb);
 	curr_col_ref_meta.tab = tab;
 	curr_col_ref_meta.col = col;
-	llvm_tab = curr_col_ref_meta.llvm_tab =
+	llvm_tab = curr_col_ref_meta.llvm_tab_var =
 		LLVMBuildAlloca(b, LLVMInt32Type(), "tab");
 	assert(llvm_tab);
 	llvm_tab_imm = LLVMConstInt(LLVMInt32Type(), tab, false);
@@ -1251,7 +1251,7 @@ llvm_build_col_ref(struct llvm_build_ctx *build_ctx)
 		LLVMBuildStore(b, llvm_tab_imm, llvm_tab);
 	assert(llvm_tab_store);
 	llvm_tab = LLVMBuildLoad2(b, LLVMInt32Type(), llvm_tab, "");
-	llvm_col = curr_col_ref_meta.llvm_col =
+	llvm_col = curr_col_ref_meta.llvm_col_var =
 		LLVMBuildAlloca(b, LLVMInt32Type(), "col");
 	assert(llvm_col);
 	llvm_col_imm = LLVMConstInt(LLVMInt32Type(), col, false);
