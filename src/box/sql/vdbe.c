@@ -513,7 +513,7 @@ vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx)
 	if (vdbe_field_ref_fetch(&vdbe_csr->field_ref, col, tgt_reg) != 0)
 		return -1;
 	tgt_reg->field_type = field_type;
-	op_column_out:
+op_column_out:
 	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
 	return 0;
 }
