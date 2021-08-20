@@ -38,6 +38,7 @@
  * indices, you might also think of this module as the "query optimizer".
  */
 #include "coll/coll.h"
+#include "llvm_jit.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "mem.h"
@@ -666,21 +667,39 @@ estLog(LogEst N)
  * instead of via table lookup.
  */
 static void
-translateColumnToCopy(Vdbe * v,		/* The VDBE containing code to translate */
-		      int iStart,	/* Translate from this opcode to the end */
-		      int iTabCur,	/* OP_Column references to this table */
-		      int iRegister)	/* The first column is in this register */
+translateColumnToCopy(Vdbe *vdbe, /* VDBE containing code to translate */
+		      /* LLVM JIT context containing code to patch */
+		      struct llvm_jit_ctx *jit_ctx,
+		      int start_addr, /* Translate from this opcode to the end */
+		      int tab, /* OP_Column references to this table */
+		      int reg_idx) /* first column is in this register */
 {
-	VdbeOp *pOp = sqlVdbeGetOp(v, iStart);
-	int iEnd = sqlVdbeCurrentAddr(v);
-	for (; iStart < iEnd; iStart++, pOp++) {
-		if (pOp->p1 != iTabCur)
+	assert(vdbe);
+	assert(start_addr >= 0);
+	assert(tab >= 0);
+	assert(reg_idx >= 0);
+
+	VdbeOp *vdbe_op;
+	int finish_addr;
+
+	vdbe_op = sqlVdbeGetOp(vdbe, start_addr);
+	finish_addr = sqlVdbeCurrentAddr(vdbe);
+	for (; start_addr < finish_addr; ++start_addr, ++vdbe_op) {
+		if (vdbe_op->opcode == OP_ExecJITCallback) {
+			assert(jit_ctx);
+			llvm_jit_change_col_refs_to_reg_copies(jit_ctx,
+							       vdbe_op->p4.p,
+							       vdbe_op->p2, tab,
+							       reg_idx);
 			continue;
-		if (pOp->opcode == OP_Column) {
-			pOp->opcode = OP_Copy;
-			pOp->p1 = pOp->p2 + iRegister;
-			pOp->p2 = pOp->p3;
-			pOp->p3 = 0;
+		}
+		if (vdbe_op->p1 != tab)
+			continue;
+		if (vdbe_op->opcode == OP_Column) {
+			vdbe_op->opcode = OP_Copy;
+			vdbe_op->p1 = vdbe_op->p2 + reg_idx;
+			vdbe_op->p2 = vdbe_op->p3;
+			vdbe_op->p3 = 0;
 		}
 	}
 }
