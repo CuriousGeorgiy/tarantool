@@ -3063,6 +3063,7 @@ void sqlUpdate(Parse *, SrcList *, ExprList *, Expr *,
 		   enum on_conflict_action);
 WhereInfo *sqlWhereBegin(Parse *, SrcList *, Expr *, ExprList *, ExprList *,
 			     u16, int);
+void sqlWherePostEnd(WhereInfo *where_info);
 void sqlWhereEnd(WhereInfo *);
 LogEst sqlWhereOutputRowCount(WhereInfo *);
 int sqlWhereIsDistinct(WhereInfo *);
