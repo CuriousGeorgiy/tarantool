@@ -3561,7 +3561,7 @@ sqlExprCachePop(Parse * pParse)
  * register might be in the cache in multiple places, so be sure to
  * get them all.
  */
-static void
+void
 sqlExprCachePinRegister(Parse * pParse, int iReg)
 {
 	int i;

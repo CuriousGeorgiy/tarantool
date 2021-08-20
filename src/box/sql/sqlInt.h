@@ -3110,6 +3110,7 @@ void sqlExprCodeMove(Parse *, int, int, int);
 void sqlExprCacheStore(Parse *, int, int, int);
 void sqlExprCachePush(Parse *);
 void sqlExprCachePop(Parse *);
+void sqlExprCachePinRegister(Parse *, int);
 void sqlExprCacheRemove(Parse *, int, int);
 void sqlExprCacheClear(Parse *);
 void sql_expr_type_cache_change(Parse *, int, int);
