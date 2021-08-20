@@ -34,6 +34,7 @@
  * interface, and routines that contribute to loading the database schema
  * from disk.
  */
+#include "llvm_jit.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "box/space.h"
@@ -219,6 +220,11 @@ sql_parser_destroy(Parse *parser)
 		assert(db->lookaside.bDisable >=
 		       parser->disableLookaside);
 		db->lookaside.bDisable -= parser->disableLookaside;
+	}
+	struct llvm_jit_ctx *llvm_jit_ctx = parser->llvm_jit_ctx;
+	if (llvm_jit_ctx != NULL) {
+		llvm_jit_ctx_delete(llvm_jit_ctx);
+		parser->llvm_jit_ctx = NULL;
 	}
 	parser->disableLookaside = 0;
 	switch (parser->parsed_ast_type) {
