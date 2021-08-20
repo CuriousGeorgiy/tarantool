@@ -3191,10 +3191,10 @@ void sqlSavepoint(Parse *, int, Token *);
 void sqlCloseSavepoints(Vdbe *);
 
 bool
-expr_can_be_jitted(struct Expr *expr);
+expr_can_be_jit_compiled(Expr *expr);
 
 bool
-expr_list_can_be_jitted(struct ExprList *expr_list);
+expr_list_can_be_jit_compiled(ExprList *expr_list);
 
 int sqlExprIsConstant(Expr *);
 int sqlExprIsConstantNotJoin(Expr *);

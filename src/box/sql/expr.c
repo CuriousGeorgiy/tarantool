@@ -2111,63 +2111,68 @@ exprIsConst(Expr * p, int initFlag, int iCur)
 	return w.eCode;
 }
 
-/**
- * In current implementation only constant expressions containing
- * integer literals and binary operations can be jitted.
- */
 static int
-expr_node_can_be_jitted(struct Walker *walker, struct Expr *expr)
+expr_node_can_be_jit_compiled(Walker *walker, Expr *expr)
 {
+	assert(walker != NULL);
+	assert(expr != NULL);
+
 	switch (expr->op) {
-		case TK_FUNCTION:
-		case TK_BETWEEN:
-		case TK_IN:
-		case TK_VARIABLE:
-		case TK_AGG_FUNCTION:
-			walker->eCode = 0;
-			return WRC_Abort;
-		default:
-			return WRC_Continue;
+	case TK_AGG_COLUMN:
+	case TK_COLUMN_REF:
+	case TK_INTEGER:
+	case TK_TRUE:
+	case TK_FALSE:
+	case TK_FLOAT:
+	case TK_STRING:
+	case TK_NULL:
+	case TK_UPLUS:
+		return WRC_Continue;
+	default:
+		walker->eCode = 0;
+		return WRC_Abort;
 	}
 }
 
 bool
-expr_can_be_jitted(struct Expr *expr)
+expr_can_be_jit_compiled(Expr *expr)
 {
+	assert(expr != NULL);
+
 	Walker w;
-	memset(&w, 0, sizeof(w));
+
+	memset(&w, 0, sizeof(Walker));
 	w.eCode = 1;
-	w.xExprCallback = expr_node_can_be_jitted;
-	/* If expr contains sub-select - JIT is unavailable. */
+	w.xExprCallback = expr_node_can_be_jit_compiled;
+	/* If expression contains a non-constant sub-select - JIT is unavailable. */
 	w.xSelectCallback = selectNodeIsConstant;
 	sqlWalkExpr(&w, expr);
 	return w.eCode;
 }
 
 bool
-expr_list_can_be_jitted(struct ExprList *expr_list)
+expr_list_can_be_jit_compiled(ExprList *expr_list)
 {
-	if (! jit_is_enabled())
+	assert(expr_list != NULL);
+
+	uint32_t totalHeight = 0;
+	int i;
+	struct ExprList_item *item;
+
+	if (!llvm_jit_available())
 		return false;
-	int space_cursor = expr_list->a[0].pExpr->iTable;
-	uint32_t total_height = 0;
-	for (int i = 0; i < expr_list->nExpr; ++i) {
-		struct Expr *expr = expr_list->a[i].pExpr;
-		if (! expr_can_be_jitted(expr))
+	assert(expr_list->nExpr >= 0);
+	assert(expr_list->nExpr == 0 || expr_list->a != NULL);
+	for (i = 0, item = expr_list->a; i < expr_list->nExpr; ++i, ++item) {
+		Expr *expr = item->pExpr;
+		assert(expr);
+
+		if (!expr_can_be_jit_compiled(expr))
 			return false;
-		if (space_cursor != expr->iTable)
-			return false;
-		total_height += expr->nHeight;
+		totalHeight += expr->nHeight;
 	}
-	if (total_height < JIT_MIN_TOTAL_EXPR_HEIGHT)
+	if (totalHeight < LLVM_JIT_MIN_TOTAL_EXPR_LIST_HEIGHT)
 		return false;
-//	struct space *space = space_by_id(expr_list->a[0].pExpr->space_def->id);
-//	if (space != NULL) {
-//		struct index *pk = space->index[0];
-//		if (pk != NULL &&
-//		    pk->vtab->count(pk, ITER_ALL, NULL, 0) < JIT_MIN_TUPLE_COUNT)
-//			return false;
-//	}
 	return true;
 }
 
