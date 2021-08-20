@@ -41,8 +41,10 @@
 
 #include "box/session.h"
 #include "box/schema.h"
+#include "llvm_jit.h"
 #include "say.h"
 #include "sqlInt.h"
+#include "vdbeInt.h"
 #include "tarantoolInt.h"
 
 /* Character classes for tokenizing
@@ -475,6 +477,7 @@ sqlRunParser(Parse * pParse, const char *zSql)
 	int lastTokenParsed = -1;	/* type of the previous token */
 	sql *db = pParse->db;	/* The database connection */
 	int mxSqlLen;		/* Max length of an SQL string */
+	Vdbe *pVdbe;
 
 	assert(zSql != 0);
 	mxSqlLen = db->aLimit[SQL_LIMIT_SQL_LENGTH];
@@ -540,11 +543,15 @@ sqlRunParser(Parse * pParse, const char *zSql)
 		}
 		pParse->line_pos += pParse->sLastToken.n;
 	}
+	pVdbe = pParse->pVdbe;
+	if (pVdbe != NULL && pVdbe->llvm_jit_ctx != NULL && !llvm_jit_ctx_fin(
+	pVdbe->llvm_jit_ctx))
+		pParse->is_aborted = true;
 	pParse->zTail = &zSql[i];
 	sqlParserFree(pEngine, sql_free);
 	if (db->mallocFailed)
 		pParse->is_aborted = true;
-	if (pParse->pVdbe != NULL && pParse->is_aborted) {
+	if (pVdbe != NULL && pParse->is_aborted) {
 		sqlVdbeDelete(pParse->pVdbe);
 		pParse->pVdbe = 0;
 	}
