@@ -395,7 +395,7 @@ vdbe_field_ref_fetch_data(struct vdbe_field_ref *field_ref, uint32_t fieldno)
  * @retval 0 Status code in case of success.
  * @retval sql_ret_code Error code otherwise.
  */
-static int
+int
 vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 		     struct Mem *dest_mem)
 {
@@ -410,6 +410,220 @@ vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
 		return -1;
 	UPDATE_MAX_BLOBSIZE(dest_mem);
 	return 0;
+}
+
+int
+vdbe_op_next(Vdbe *vdbe, int csr, int res, int event_cntr)
+{
+	assert(vdbe != NULL);
+	assert(csr >= 0 && csr < vdbe->nCursor);
+	assert(res == 0 || res == 1);
+	testcase(res == 1);
+	assert(event_cntr < ArraySize(vdbe->aCounter));
+
+	VdbeCursor *vdbe_csr = vdbe->apCsr[csr];
+	assert(vdbe_csr != NULL);
+	assert(vdbe_csr->eCurType == CURTYPE_TARANTOOL);
+
+	if (sqlCursorNext(vdbe_csr->uc.pCursor, &res) != 0)
+		return -1;
+	vdbe_csr->cacheStatus = CACHE_STALE;
+	VdbeBranchTaken(res==0,2);
+	if (res == 0) {
+		vdbe_csr->nullRow = 0;
+		vdbe->aCounter[event_cntr]++;
+#ifdef SQL_TEST
+		sql_search_count++;
+#endif
+		return 1;
+	} else {
+		vdbe_csr->nullRow = 1;
+	}
+	return 0;
+}
+
+void
+vdbe_op_realify(Vdbe *vdbe, int tgt_reg_idx)
+{
+	assert(vdbe != NULL);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+
+	struct Mem *tgt_reg = &vdbe->aMem[tgt_reg_idx];
+	assert(tgt_reg != NULL);
+
+	if (mem_is_int(tgt_reg))
+		mem_to_double(tgt_reg);
+}
+
+int
+vdbe_op_column(Vdbe *vdbe, int tab, int col, int tgt_reg_idx)
+{
+	assert(vdbe != NULL);
+	assert(tab >= 0 && tab < vdbe->nCursor);
+	assert(col >= 0);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+
+	VdbeCursor *vdbe_csr = vdbe->apCsr[tab];
+	assert(vdbe_csr);
+	assert(vdbe_csr->eCurType != CURTYPE_PSEUDO || vdbe_csr->nullRow);
+	assert(vdbe_csr->eCurType != CURTYPE_SORTER);
+	assert(col < vdbe_csr->nField);
+	struct Mem *tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
+	assert(tgt_reg != NULL);
+	enum field_type field_type = field_type_MAX;
+
+	if (vdbe_csr->cacheStatus != vdbe->cacheCtr) {
+		if (vdbe_csr->nullRow != 0) {
+			if (vdbe_csr->eCurType == CURTYPE_PSEUDO) {
+				assert(vdbe_csr->uc.pseudoTableReg > 0);
+
+				assert(vdbe->aMem != NULL);
+				Mem *reg = &vdbe->aMem[vdbe_csr->uc.pseudoTableReg];
+				assert(mem_is_bin(reg));
+				assert(memIsValid(reg));
+
+				vdbe_field_ref_prepare_data(&vdbe_csr->field_ref,
+							    reg->z, reg->n);
+			} else {
+				goto op_column_out;
+			}
+		} else {
+			assert(vdbe_csr->eCurType == CURTYPE_TARANTOOL);
+
+			BtCursor *bt_csr = vdbe_csr->uc.pCursor;
+			assert(bt_csr != NULL);
+
+			assert(sqlCursorIsValid(bt_csr));
+			assert((bt_csr->curFlags & BTCF_TaCursor) != 0 ||
+			       (bt_csr->curFlags & BTCF_TEphemCursor) != 0);
+
+			vdbe_field_ref_prepare_tuple(&vdbe_csr->field_ref,
+						     bt_csr->last_tuple);
+		}
+		vdbe_csr->cacheStatus = vdbe->cacheCtr;
+	}
+	if (vdbe_csr->eCurType == CURTYPE_TARANTOOL) {
+		BtCursor *bt_csr = vdbe_csr->uc.pCursor;
+		assert(bt_csr != NULL);
+		struct space *space = bt_csr->space;
+		assert(space != NULL);
+		struct space_def *space_def = space->def;
+		assert(space_def != NULL);
+		struct field_def *space_fields = space_def->fields;
+		assert(space_fields != NULL);
+
+		field_type = space_fields[col].type;
+	} else if (vdbe_csr->eCurType == CURTYPE_SORTER) {
+		VdbeSorter *sorter = vdbe_csr->uc.pSorter;
+		assert(sorter != NULL);
+
+		field_type = vdbe_sorter_get_field_type(sorter, col);
+	}
+	if (vdbe_field_ref_fetch(&vdbe_csr->field_ref, col, tgt_reg) != 0)
+		return -1;
+	tgt_reg->field_type = field_type;
+op_column_out:
+	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
+	return 0;
+}
+
+int
+vdbe_op_fetch(Vdbe *vdbe, int field_ref_reg_idx, int field_idx, int tgt_reg_idx)
+{
+	assert(vdbe);
+	assert(field_ref_reg_idx > 0 &&
+	       field_ref_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+	assert(field_idx >= 0);
+	assert(tgt_reg_idx > 0 && tgt_reg_idx <= (vdbe->nMem + 1 - vdbe->nCursor));
+
+	assert(vdbe->aMem != NULL);
+	struct vdbe_field_ref *field_ref =
+		(struct vdbe_field_ref *)vdbe->aMem[field_ref_reg_idx].u.p;
+	assert(field_ref != NULL);
+	struct Mem *tgt_reg = vdbe_prepare_null_out(vdbe, tgt_reg_idx);
+	assert(tgt_reg != NULL);
+
+	if (vdbe_field_ref_fetch(field_ref, field_idx, tgt_reg) != 0)
+		return -1;
+	REGISTER_TRACE(vdbe, tgt_reg_idx, tgt_reg);
+	return 0;
+}
+
+sql_context *
+vdbe_op_aggstep0(Vdbe *vdbe, struct func *func, int argc)
+{
+	assert(vdbe);
+	assert(func);
+	assert(argc >= 0);
+
+	sql *db = vdbe->db;
+	assert(db);
+	sql_context *ctx;
+
+	ctx = sqlDbMallocRawNN(db, sizeof(sql_context) + (argc - 1) * sizeof(sql_value *));
+	if (ctx == NULL) {
+		sqlOomFault(db);
+		return NULL;
+	}
+	memset(ctx, 0, sizeof(sql_context));
+	ctx->func = func;
+	ctx->argc = argc;
+	return ctx;
+}
+
+int
+vdbe_op_aggstep(Vdbe *vdbe, sql_context *sql_ctx, int acc_reg_idx, int arg_regs_idx)
+{
+	assert(vdbe != NULL);
+	assert(sql_ctx != NULL);
+	assert(acc_reg_idx >= 0);
+	assert(arg_regs_idx >= 0);
+
+	assert(vdbe->aMem != NULL);
+	Mem *acc_reg = &vdbe->aMem[acc_reg_idx];
+	int i;
+	Mem out_reg;
+
+	if (sql_ctx->pMem != acc_reg) {
+
+		sql_ctx->pMem = acc_reg;
+		for(i = sql_ctx->argc - 1; i >= 0; --i) {
+			sql_ctx->argv[i] = &vdbe->aMem[arg_regs_idx + i];
+		}
+	}
+#ifdef SQL_DEBUG
+	for(i = 0; i < sql_ctx->argc; ++i) {
+		assert(memIsValid(sql_ctx->argv[i]));
+		REGISTER_TRACE(vdbe, arg_regs_idx + i, sql_ctx->argv[i]);
+	}
+#endif
+	acc_reg->n++;
+	mem_create(&out_reg);
+	sql_ctx->pOut = &out_reg;
+	sql_ctx->is_aborted = false;
+	sql_ctx->skipFlag = 0;
+	assert(sql_ctx->func->def->language == FUNC_LANGUAGE_SQL_BUILTIN);
+	struct func_sql_builtin *func = (struct func_sql_builtin *)sql_ctx->func;
+	func->call(sql_ctx, sql_ctx->argc, sql_ctx->argv);
+	if (sql_ctx->is_aborted) {
+		mem_destroy(&out_reg);
+		return -1;
+	}
+	assert(mem_is_null(&out_reg));
+	assert(sql_ctx->skipFlag == 0);
+	return 0;
+}
+
+void
+vdbe_op_aggfinal(Vdbe *vdbe, sql_context *sql_ctx)
+{
+	assert(vdbe != NULL);
+	assert(sql_ctx != NULL);
+
+	sql *db = vdbe->db;
+	assert(db != NULL);
+
+	sqlDbFree(db, sql_ctx);
 }
 
 /*
