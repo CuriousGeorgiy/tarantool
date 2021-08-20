@@ -2229,6 +2229,8 @@ sqlVdbeDelete(Vdbe * p)
 	p->magic = VDBE_MAGIC_DEAD;
 	p->db = 0;
 	free(p->var_pos);
+	llvm_jit_ctx_delete(p->llvm_jit_ctx);
+	p->llvm_jit_ctx = NULL;
 	/*
 	 * VDBE is responsible for releasing region after txn
 	 * was commited.
