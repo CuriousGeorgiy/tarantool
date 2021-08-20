@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * Copyright 2010-2017, Tarantool AUTHORS, please see AUTHORS file.
  *
