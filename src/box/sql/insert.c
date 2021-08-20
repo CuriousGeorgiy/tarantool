@@ -33,6 +33,7 @@
  * This file contains C code routines that are called by the parser
  * to handle INSERT statements in sql.
  */
+#include "llvm_jit.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "mem.h"
@@ -803,6 +804,9 @@ vdbe_emit_ck_constraint(struct Parse *parser, struct Expr *expr,
 			ck_constraint_name));
 	int check_is_passed = sqlVdbeMakeLabel(v);
 	sqlExprIfTrue(parser, expr, check_is_passed, SQL_JUMPIFNULL);
+	struct llvm_jit_ctx *llvm_jit_ctx = parser->llvm_jit_ctx;
+	if (llvm_jit_ctx != NULL && !llvm_jit_ctx_fin(llvm_jit_ctx))
+		parser->is_aborted = true;
 	const char *fmt = tnt_errcode_desc(ER_CK_CONSTRAINT_FAILED);
 	const char *error_msg = tt_sprintf(fmt, ck_constraint_name, expr_str);
 	sqlVdbeAddOp4(v, OP_SetDiag, ER_CK_CONSTRAINT_FAILED, 0, 0,
