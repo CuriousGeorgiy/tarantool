@@ -5522,6 +5522,68 @@ vdbe_code_raise_on_multiple_rows(struct Parse *parser, int limit_reg, int end_ma
 	sqlReleaseTempReg(parser, r1);
 }
 
+static bool
+agg_loop_can_be_jit_compiled(Parse *parse_ctx, WhereInfo *where_info,
+			     AggInfo *agg_info)
+{
+	assert(parse_ctx != NULL);
+	assert(where_info != NULL);
+	assert(agg_info != NULL);
+
+	assert(where_info->a != NULL);
+	WhereLevel *where_lvl = &where_info->a[0];
+	Vdbe *vdbe = parse_ctx->pVdbe;
+	assert(vdbe != NULL);
+	WhereLoop *where_loop = where_lvl->pWLoop;
+	int i;
+	struct AggInfo_func *func;
+	struct AggInfo_col *col;
+
+	if (!llvm_jit_available())
+		return false;
+	if (sqlWhereIsOrdered(where_info) != 0)
+		return false;
+	assert(where_info->nLevel >= 0);
+	if (where_info->nLevel != 1)
+		return false;
+	if (where_lvl->op != OP_Next)
+		return false;
+	if (where_lvl->p2 != sqlVdbeCurrentAddr(vdbe))
+		return false;
+	assert(where_lvl->u.in.nIn >= 0);
+	if ((where_loop->wsFlags & WHERE_IN_ABLE) != 0 && where_lvl->u.in.nIn > 0)
+		return false;
+	if (where_lvl->addrSkip)
+		return false;
+	if (where_lvl->iLeftJoin)
+		return false;
+	assert(agg_info->nFunc >= 0);
+	assert(agg_info->nFunc == 0 || agg_info->aFunc != NULL);
+	for (i = 0, func = agg_info->aFunc; i < agg_info->nFunc; ++i, ++func) {
+		ExprList *expr_list = func->pExpr->x.pList;
+		assert(!ExprHasProperty(func->pExpr, EP_xIsSelect));
+
+		if (func->iDistinct >= 0)
+			return false;
+		if (sql_func_flag_is_set(func->func, SQL_FUNC_NEEDCOLL))
+			return false;
+		if (expr_list != NULL && !expr_list_can_be_jit_compiled(expr_list))
+			return false;
+	}
+	assert(agg_info->nAccumulator >= 0);
+	assert(agg_info->nAccumulator == 0 || agg_info->aCol != NULL);
+	for (i = 0, col = agg_info->aCol; i < agg_info->nAccumulator; ++i, ++col) {
+		assert(col);
+
+		Expr *expr = col->pExpr;
+		assert(expr);
+
+		if (!expr_can_be_jit_compiled(expr))
+			return false;
+	}
+	return true;
+}
+
 /*
  * Generate code for the SELECT statement given in the p argument.
  *
