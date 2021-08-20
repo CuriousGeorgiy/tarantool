@@ -6505,18 +6505,38 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					sql_expr_list_delete(db, pDel);
 					goto select_end;
 				}
-				updateAccumulator(pParse, &sAggInfo);
-				assert(pMinMax == 0 || pMinMax->nExpr == 1);
-				if (sqlWhereIsOrdered(pWInfo) > 0) {
-					sqlVdbeGoto(v,
-							sqlWhereBreakLabel
-							(pWInfo));
-					VdbeComment((v, "%s() by index",
-						     (flag ==
-						      WHERE_ORDERBY_MIN ? "min"
-						      : "max")));
+				if (agg_loop_can_be_jit_compiled(pParse, pWInfo,
+								 &sAggInfo)) {
+					struct llvm_jit_ctx *llvm_jit_ctx =
+						pParse->llvm_jit_ctx;
+					if (llvm_jit_ctx == NULL) {
+						llvm_jit_ctx = llvm_jit_ctx_new(pParse);
+						if (llvm_jit_ctx == NULL) {
+							sql_expr_list_delete(db, pDel);
+							pParse->is_aborted = true;
+							goto select_end;
+						}
+						pParse->llvm_jit_ctx = llvm_jit_ctx;
+					}
+					if (!llvm_build_agg_loop(llvm_jit_ctx,
+								 pWInfo,
+								 &sAggInfo)) {
+						sql_expr_list_delete(db, pDel);
+						pParse->is_aborted = true;
+						goto select_end;
+					}
+				} else {
+					updateAccumulator(pParse, &sAggInfo);
+					assert(pMinMax == NULL || pMinMax->nExpr == 1);
+					if (sqlWhereIsOrdered(pWInfo) != 0) {
+						sqlVdbeGoto(v,
+							    sqlWhereBreakLabel(pWInfo));
+						VdbeComment((v, "%s() by index",
+						(flag ==
+						 WHERE_ORDERBY_MIN ? "min" : "max")));
+					}
+					sqlWhereEnd(pWInfo);
 				}
-				sqlWhereEnd(pWInfo);
 				finalizeAggFunctions(pParse, &sAggInfo);
 				sql_expr_list_delete(db, pDel);
 			}
