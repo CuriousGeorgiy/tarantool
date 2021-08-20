@@ -39,7 +39,7 @@ set(sql_sources
     sql/global.c
     sql/hash.c
     sql/insert.c
-    sql/jit_cb.c
+    sql/llvm_jit.c
     sql/legacy.c
     sql/main.c
     sql/malloc.c

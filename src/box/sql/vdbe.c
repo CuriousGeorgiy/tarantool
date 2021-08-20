@@ -45,6 +45,7 @@
 #include "box/txn.h"
 #include "box/tuple.h"
 #include "box/port.h"
+#include "llvm_jit.h"
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"

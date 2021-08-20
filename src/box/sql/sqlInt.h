@@ -1112,7 +1112,7 @@ struct sql {
 	Lookaside lookaside;	/* Lookaside malloc configuration */
 	Hash aFunc;		/* Hash table of connection functions */
 
-	bool llvm_session_init; /* True if LLVM JIT has been initialized. */
+	bool llvm_session_ini; /* True if LLVM JIT has been initialized. */
 };
 
 /*
