@@ -1594,17 +1594,9 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 		}
 		memset(p->apCsr, 0, nCursor * sizeof(VdbeCursor *));
 	}
-	if (p->jit_on) {
-		assert(pParse->jit_context != NULL);
-		p->jit_context = calloc(1, sizeof(*p->jit_context));
-		if (p->jit_context == NULL) {
-			diag_set(OutOfMemory, sizeof(*p->jit_context), "calloc",
-				 "jit_context");
-			pParse->is_aborted = true;
-			return;
-		}
-		p->jit_context->module = pParse->jit_context->module;
-		assert(p->jit_context->module != NULL);
+	if (pParse->llvm_jit_ctx != NULL) {
+		p->llvm_jit_ctx = pParse->llvm_jit_ctx;
+		pParse->llvm_jit_ctx = NULL;
 	}
 	sqlVdbeRewind(p);
 }
