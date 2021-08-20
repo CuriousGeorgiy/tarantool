@@ -35,6 +35,7 @@
  */
 #include "box/coll_id_cache.h"
 #include "coll/coll.h"
+#include "llvm_jit.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "box/schema.h"
@@ -4619,86 +4620,84 @@ sqlExprCodeAndCache(Parse * pParse, Expr * pExpr, int target)
  * in registers at srcReg, and so the value can be copied from there.
  */
 int
-sqlExprCodeExprList(Parse * pParse,	/* Parsing context */
-			ExprList * pList,	/* The expression list to be coded */
-			int target,	/* Where to write results */
-			int srcReg,	/* Source registers if SQL_ECEL_REF */
-			u8 flags	/* SQL_ECEL_* flags */
-    )
+sqlExprCodeExprList(Parse *parse_ctx,	/* Parsing context */
+		    ExprList *expr_list,	/* The expression list to be coded */
+		    int tgt_regs_idx,	/* Where to push expressions */
+		    int src_regs_idx,	/* Source registers if SQL_ECEL_REF */
+		    u8 flags)		/* SQL_ECEL_* flags */
 {
-	struct ExprList_item *pItem;
-	int i, j, n;
-	u8 copyOp = (flags & SQL_ECEL_DUP) ? OP_Copy : OP_SCopy;
-	Vdbe *v = pParse->pVdbe;
-	assert(pList != 0);
-	assert(target > 0);
-	assert(pParse->pVdbe != 0);	/* Never gets this far otherwise */
-	n = pList->nExpr;
-	if (!ConstFactorOk(pParse))
-		flags &= ~SQL_ECEL_FACTOR;
-	if (! pParse->avoid_jit && expr_list_can_be_jitted(pList)) {
-		struct jit_compile_context *ctx = parse_get_jit_context(pParse);
-		if (ctx == NULL)
-			return -1;
-		if (jit_expr_emit_start(ctx, n) != 0) {
-			pParse->is_aborted = true;
-			return -1;
-		}
-		int cursor = pList->a[0].pExpr->iTable;
-		for (int i = 0; i < pList->nExpr; ++i) {
-			struct Expr *expr = pList->a[i].pExpr;
-			assert(expr->iTable == cursor);
-			if (jit_emit_expr(ctx, expr, i) != 0) {
-				pParse->is_aborted = true;
-				return -1;
-			}
-		}
-		if (ctx->func_ctx->strategy != COMPILE_EXPR_AGG) {
-			if (jit_expr_emit_finish(ctx) != 0) {
-				pParse->is_aborted = true;
-				return -1;
-			}
-			vdbe_add_jit_op(v, cursor + 1, target, ctx->func_ctx,
-					"JIT for result set epxr list");
-			return n;
-		}
-		return 0;
-	}
+	assert(parse_ctx != NULL);
+	assert(expr_list != NULL);
+	assert(tgt_regs_idx > 0);
+	assert(src_regs_idx >= 0);
 
-	for (pItem = pList->a, i = 0; i < n; i++, pItem++) {
-		Expr *pExpr = pItem->pExpr;
+	int expr_cnt = expr_list->nExpr;
+	assert(expr_cnt >= 0);
+	u8 copy_op = (flags & SQL_ECEL_DUP) != 0 ? OP_Copy : OP_SCopy;
+	Vdbe *vdbe = parse_ctx->pVdbe;
+	int i;
+	struct ExprList_item *item;
+
+	if (!ConstFactorOk(parse_ctx))
+		flags &= ~SQL_ECEL_FACTOR;
+	if (!parse_ctx->avoid_jit && expr_list_can_be_jit_compiled(expr_list)) {
+		struct llvm_jit_ctx *llvm_jit_ctx = parse_ctx->llvm_jit_ctx;
+
+		if (llvm_jit_ctx == NULL) {
+			llvm_jit_ctx = llvm_jit_ctx_new(parse_ctx);
+			if (llvm_jit_ctx == NULL) {
+				parse_ctx->is_aborted = true;
+				return expr_cnt;
+			}
+			parse_ctx->llvm_jit_ctx = llvm_jit_ctx;
+		}
+		if (!llvm_build_expr_list(llvm_jit_ctx, parse_ctx, expr_list,
+					  &expr_cnt, src_regs_idx, tgt_regs_idx,
+					  flags)) {
+			parse_ctx->is_aborted = true;
+		}
+		return expr_cnt;
+	}
+	for (i = 0, item = expr_list->a; i < expr_cnt; ++i, ++item) {
+		assert(item);
+
+		Expr *expr;
+		int j;
+
+		expr = item->pExpr;
+		assert(expr);
 		if ((flags & SQL_ECEL_REF) != 0
-		    && (j = pItem->u.x.iOrderByCol) > 0) {
-			if (flags & SQL_ECEL_OMITREF) {
-				i--;
-				n--;
+		    && (j = item->u.x.iOrderByCol) > 0) {
+			if ((flags & SQL_ECEL_OMITREF) != 0) {
+				--i;
+				--expr_cnt;
 			} else {
-				sqlVdbeAddOp2(v, copyOp, j + srcReg - 1,
-						  target + i);
+				sqlVdbeAddOp2(vdbe, copy_op,
+					      j + src_regs_idx - 1,
+					      tgt_regs_idx + i);
 			}
 		} else if ((flags & SQL_ECEL_FACTOR) != 0
-			   && sqlExprIsConstant(pExpr)) {
-			sqlExprCodeAtInit(pParse, pExpr, target + i, 0);
+			   && sqlExprIsConstant(expr)) {
+			sqlExprCodeAtInit(parse_ctx, expr, tgt_regs_idx + i, 0);
 		} else {
-			int inReg =
-			    sqlExprCodeTarget(pParse, pExpr, target + i);
-			if (inReg != target + i) {
-				VdbeOp *pOp;
-				if (copyOp == OP_Copy
-				    && (pOp =
-					sqlVdbeGetOp(v,
-							 -1))->opcode == OP_Copy
-				    && pOp->p1 + pOp->p3 + 1 == inReg
-				    && pOp->p2 + pOp->p3 + 1 == target + i) {
-					pOp->p3++;
+			int reg = sqlExprCodeTarget(parse_ctx, expr,
+						    tgt_regs_idx + i);
+			if (reg != tgt_regs_idx + i) {
+				VdbeOp *op;
+
+				op = sqlVdbeGetOp(vdbe, -1);
+				if (copy_op == OP_Copy && op->opcode == OP_Copy &&
+				    op->p1 + op->p3 + 1 == reg &&
+				    op->p2 + op->p3 + 1 == tgt_regs_idx + i) {
+					op->p3++;
 				} else {
-					sqlVdbeAddOp2(v, copyOp, inReg,
-							  target + i);
+					sqlVdbeAddOp2(vdbe, copy_op, reg,
+						      tgt_regs_idx + i);
 				}
 			}
 		}
 	}
-	return n;
+	return expr_cnt;
 }
 
 /*
