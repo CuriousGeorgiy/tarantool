@@ -391,6 +391,7 @@ txn_rollback_one_stmt(struct txn *txn, struct txn_stmt *stmt)
 static void
 txn_rollback_to_svp(struct txn *txn, struct stailq_entry *svp)
 {
+	txn->psn = ++txn_last_psn;
 	struct txn_stmt *stmt;
 	struct stailq rollback;
 	stailq_cut_tail(&txn->stmts, svp, &rollback);
@@ -411,6 +412,7 @@ txn_rollback_to_svp(struct txn *txn, struct stailq_entry *svp)
 		stmt->space = NULL;
 		stmt->row = NULL;
 	}
+	txn->psn = 0;
 }
 
 /*
@@ -757,6 +759,7 @@ txn_free_or_wakeup(struct txn *txn)
 void
 txn_complete_fail(struct txn *txn)
 {
+	txn->psn = ++txn_last_psn;
 	assert(!txn_has_flag(txn, TXN_IS_DONE));
 	assert(txn->signature < 0);
 	assert(txn->signature != TXN_SIGNATURE_UNKNOWN);

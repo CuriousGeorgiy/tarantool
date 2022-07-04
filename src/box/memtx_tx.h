@@ -211,6 +211,11 @@ struct memtx_story {
 	 * the story is the only reason why @a tuple cannot be deleted.
 	 */
 	bool tuple_is_retained;
+	/*
+	 * Transaction that added this story was rollbacked: this story is
+	 * absolutely invisible — its only purpose is to retain the reader list.
+	 */
+	bool rollbacked;
 	/**
 	 * Link with older and newer stories (and just tuples) for each
 	 * index respectively.
