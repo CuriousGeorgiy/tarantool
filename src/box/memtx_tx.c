@@ -2069,26 +2069,45 @@ memtx_tx_history_sink_story(struct memtx_story *story)
 	}
 }
 
+/*
+ * Rollback addition of story by statement.
+ */
+static void
+memtx_tx_history_rollback_added_story(struct txn_stmt *stmt)
+{
+	assert(stmt->add_story != NULL);
+	assert(stmt->add_story->tuple == stmt->rollback_info.new_tuple);
+	struct memtx_story *story = stmt->add_story;
+	memtx_tx_history_remove_story_del_stmts(story);
+	for (uint32_t i = 0; i < story->index_count; i++)
+		memtx_tx_story_unlink_both(story, i);
+	/* The story is no more allowed to change indexes. */
+	stmt->add_story->space = NULL;
+	memtx_tx_story_unlink_added_by(story, stmt);
+}
+
+/*
+ * Rollback deletion of story by statement.
+ */
+static void
+memtx_tx_history_rollback_deleted_story(struct txn_stmt *stmt)
+{
+	assert(stmt->del_story != NULL);
+	memtx_tx_story_unlink_deleted_by(stmt->del_story, stmt);
+}
+
 void
 memtx_tx_history_rollback_stmt(struct txn_stmt *stmt)
 {
+	assert(stmt->txn->psn != 0);
 	if (stmt->add_story != NULL) {
-		assert(stmt->add_story->tuple == stmt->rollback_info.new_tuple);
-		struct memtx_story *story = stmt->add_story;
-
-		memtx_tx_history_remove_story_del_stmts(story);
-
-		for (uint32_t i = 0; i < story->index_count; i++)
-			memtx_tx_story_unlink_both(story, i);
-
-		/* The story is no more allowed to change indexes. */
-		stmt->add_story->space = NULL;
-
-		memtx_tx_story_unlink_added_by(story, stmt);
+		stmt->add_story->add_psn = stmt->txn->psn;
+		stmt->add_story->del_psn = stmt->txn->psn;
+		memtx_tx_history_rollback_added_story(stmt);
 	}
-
 	if (stmt->del_story != NULL)
-		memtx_tx_story_unlink_deleted_by(stmt->del_story, stmt);
+		memtx_tx_history_rollback_deleted_story(stmt);
+	assert(stmt->add_story == NULL && stmt->del_story == NULL);
 }
 
 /**
