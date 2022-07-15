@@ -593,8 +593,6 @@ template <bool USE_HINT>							\
 static int									\
 name(struct iterator *iterator, struct tuple **ret)				\
 {										\
-	struct tree_iterator<USE_HINT> *it =   					\
-		get_tree_iterator<USE_HINT>(iterator);				\
 	do {									\
 		int rc = name##_base<USE_HINT>(iterator, ret);			\
 		if (rc != 0 || iterator->next_raw == tree_iterator_dummie)	\

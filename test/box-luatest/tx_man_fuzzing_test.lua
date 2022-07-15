@@ -1,6 +1,7 @@
 local cluster = require('test.luatest_helpers.cluster')
 local fio = require('fio')
 local json = require('json')
+local key_def = require('key_def')
 local t = require('luatest')
 local yaml = require('yaml')
 
@@ -32,48 +33,54 @@ local p_rollback = 0.05
 local p_commit = 0.1
 
 -- Max random unsigned key (min is 0).
-local max_key = 4
-
--- Max random unsigned value (min is 0).
-local max_val = 8
-
--- Number of indexes in space.
-local idxs_cnt = 2
+local max_key = 8
 
 -- Operation types.
 local DML = 0
 local DQL = 1
 local TXL = 2
 
+-- DQL operation subtypes.
+local SELECT = 0
+local GET = 1
+local LEN = 2
+
+-- Index types.
+local TREE = 0
+local HASH = 1
+local BITSET = 2
+local RTREE  = 3
+
 local function dump_repro()
-    repro_file:write("os.execute('rm -rf *.snap *.xlog *.vylog 512')\n" ..
-                     '\n' ..
-                     "local ffi = require('ffi')\n" ..
-                     "local json = require('json')\n" ..
-                     "local log = require('log')\n" ..
-                     "local txn_proxy = require('txn_proxy')\n" ..
-                     '\n' ..
-                     'box.cfg{memtx_use_mvcc_engine = true}\n' ..
-                     '\n' ..
-                     "box.schema.space.create('s')\n" ..
-                     "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
-                     "                                         {2, 'uint'}}})\n" ..
-                     "box.space.s:create_index('sk', {unique = false,\n" ..
-                     "                                parts = {{3, 'uint'}}})\n" ..
-                     '\n')
+    --repro_file:write("os.execute('rm -rf *.snap *.xlog *.vylog 512')\n" ..
+    --                 '\n' ..
+    --                 "local ffi = require('ffi')\n" ..
+    --                 "local json = require('json')\n" ..
+    --                 "local log = require('log')\n" ..
+    --                 "local txn_proxy = require('txn_proxy')\n" ..
+    --                 '\n' ..
+    --                 'box.cfg{memtx_use_mvcc_engine = true}\n' ..
+    --                 '\n' ..
+    --                 "box.schema.space.create('s')\n" ..
+    --                 "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
+    --                 "                                         {2, 'uint'}}})\n" ..
+    --                 "box.space.s:create_index('sk', {unique = false,\n" ..
+    --                 "                                parts = {{3, 'uint'}}})\n" ..
+    --                 '\n')
 
     for _, stmt in ipairs(stmts) do
         if stmt.str == 'box.begin()' then
-            local tx_fmt = 'local tx%d = txn_proxy:new()\n'
-            repro_file:write(tx_fmt:format(stmt.tid))
+            --local tx_fmt = 'tx%d = txn_proxy:new()\n'
+            --repro_file:write(tx_fmt:format(stmt.tid))
         end
         local stmt_fmt = "tx%d('%s') -- %s\n"
         repro_file:write(stmt_fmt:format(stmt.tid, stmt.str,
                                          json.encode(stmt.res)))
     end
 
-    repro_file:write('\n' ..
-                     'os.exit()\n')
+    repro_file:write('\n')
+    --repro_file:write('\n' ..
+     --                'os.exit()\n')
 end
 
 local function dump_serialization()
@@ -83,11 +90,19 @@ local function dump_serialization()
                      "local json = require('json')\n" ..
                      "local log = require('log')\n" ..
                      '\n' ..
+                     'box.cfg{}\n' ..
+                     '\n' ..
                      "box.schema.space.create('s')\n" ..
-                     "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
+                    "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
                      "                                         {2, 'uint'}}})\n" ..
-                     "box.space.s:create_index('sk', {unique = false,\n" ..
-                     "                                parts = {{3, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk1', {type = 'HASH', \n" ..
+                     "                                 parts = {{1, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk2', {type = 'BITSET', \n" ..
+                     "                                 unique = false,\n" ..
+                     "                                 parts = {{2, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk3', {type = 'RTREE', \n" ..
+                     "                                 unique = false,\n" ..
+                     "                                 parts = {{3, 'array'}}})\n" ..
                      '\n')
 
     for _, stmt in ipairs(serialization) do
@@ -189,72 +204,159 @@ local function tx_new(conn, id)
     }, mt)
 end
 
-local ops = {
+local ro_ops = {
     {
         type = DQL,
+        subtype = SELECT,
+        idx = TREE,
         key_cnt = 0,
-        fmt = 'box.space.s.index[%d]:select({}, {iterator = "%s", ' ..
-              'fullscan = true})',
+        fmt = 'box.space.s:select({}, {iterator = "%s", fullscan = true})',
     },
     {
         type = DQL,
+        subtype = SELECT,
+        idx = TREE,
         key_cnt = 1,
-        fmt = 'box.space.s.index[%d]:select({%d}, {iterator = "%s", ' ..
-              'fullscan = true})',
+        fmt = 'box.space.s:select({%d}, {iterator = "%s", fullscan = true})',
     },
     {
         type = DQL,
+        subtype = SELECT,
+        idx = TREE,
         key_cnt = 2,
-        fmt = 'box.space.s.index[%d]:select({%d, %d}, {iterator = "%s", ' ..
-              'fullscan = true})',
+        fmt = 'box.space.s:select({%d, %d}, {iterator = "%s", fullscan = true})',
     },
+    {
+        type = DQL,
+        subtype = GET,
+        idx = TREE,
+        fmt = 'box.space.s:get{%d, %d}',
+    },
+    {
+        type = DQL,
+        subtype = LEN,
+        idx = TREE,
+        fmt = 'box.space.s:len()',
+    },
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = HASH,
+    --    key_cnt = 0,
+    --    fmt = 'box.space.s.index[1]:select({}, {fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = HASH,
+    --    key_cnt = 1,
+    --    fmt = 'box.space.s.index[1]:select({%d}, {iterator = "%s", fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = BITSET,
+    --    key_cnt = 0,
+    --    fmt = 'box.space.s.index[2]:select({}, {fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = BITSET,
+    --    key_cnt = 1,
+    --    fmt = 'box.space.s.index[2]:select({%d}, {iterator = "%s", fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = RTREE,
+    --    key_cnt = 0,
+    --    fmt = 'box.space.s.index[3]:select({}, {fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = RTREE,
+    --    key_cnt = 2,
+    --    fmt = 'box.space.s.index[3]:select({%d, %d}, {iterator = "%s", fullscan = true})',
+    --},
+    --{
+    --    type = DQL,
+    --    subtype = SELECT,
+    --    idx = RTREE,
+    --    key_cnt = 4,
+    --    fmt = 'box.space.s.index[3]:select({%d, %d, %d, %d}, {iterator = "%s", fullscan = true})',
+    --},
+}
+
+local ops = {
+    unpack(ro_ops),
     {
         type = DML,
         fmt = 'box.space.s:delete{%d, %d}',
     },
     {
         type = DML,
-        fmt = 'box.space.s:insert{%d, %d, %d}',
+        fmt = 'box.space.s:insert{%d, %d, {%d, %d}}',
     },
     {
         type = DML,
-        fmt = 'box.space.s:replace{%d, %d, %d}',
+        fmt = 'box.space.s:replace{%d, %d, {%d, %d}}',
     },
     {
         type = DML,
-        fmt = 'box.space.s:update({%d, %d}, {{"=", 3, %d}})',
+        fmt = 'box.space.s:update({%d, %d}, {{"=", 3, {%d, %d}}})',
     },
     {
         type = DML,
-        fmt = 'box.space.s:upsert({%d, %d, %d}, {{"=", 3, %d}})',
+        fmt = 'box.space.s:upsert({%d, %d, {%d, %d}}, {{"=", 3, {%d, %d}}})',
     },
 }
 
-local iters = {'EQ', 'REQ', 'GT', 'GE', 'LT', 'LE'}
+local tree_iters = {'EQ', 'REQ', 'GT', 'GE', 'LT', 'LE'}
+local hash_iters = {'EQ'}
+local bitset_iters = {'EQ', 'BITS_ALL_SET', 'BITS_ANY_SET', 'BITS_ALL_NOT_SET'}
+local rtree_iters = {'EQ', 'GT', 'GE', 'LT', 'LE', 'OVERLAPS', 'NEIGHBOR'}
+local iters_map = {[TREE] = tree_iters, [HASH] = hash_iters,
+                   [BITSET] = bitset_iters, [RTREE] = rtree_iters}
 
 local function gen_rand_operation(ro)
-    local op = ro and ops[math.random(3)] or ops[math.random(#ops)]
+    local op = ro and ro_ops[math.random(#ro_ops)] or ops[math.random(#ops)]
     local key1 = math.random(max_key)
     local key2 = math.random(max_key)
+    local key3 = math.random(max_key)
+    local key4 = math.random(max_key)
     if (op.type == DQL) then
-        local idx = 0
-        if op.key_cnt < 2 then
-            idx = math.random(idxs_cnt - 1)
-        end
-        local iter = iters[math.random(#iters)]
-        if op.key_cnt == 0 then
-            op.str = op.fmt:format(idx, iter)
-        else
-            if op.key_cnt == 1 then
-                op.str = op.fmt:format(idx, key1, iter)
+        if op.subtype == SELECT then
+            local iters = iters_map[op.idx]
+            local iter = iters[math.random(#iters)]
+            assert(op.idx ~= HASH or iter == 'EQ')
+            if op.key_cnt == 0 then
+                if op.idx == TREE then
+                    op.str = op.fmt:format(iter)
+                else
+                    op.str = op.fmt
+                end
             else
-                op.str = op.fmt:format(idx, key1, key2, iter)
+                if op.key_cnt == 1 then
+                    op.str = op.fmt:format(key1, iter)
+                elseif op.key_cnt == 2 then
+                    op.str = op.fmt:format(key1, key2, iter)
+                else
+                    op.str = op.fmt:format(key1, key2, key3, key4, iter)
+                end
             end
+        elseif op.subtype == GET then
+            op.str = op.fmt:format(key1, key2)
+        else
+            op.str = op.fmt
         end
     else
-        local val = math.random(max_val)
-        local upd = math.random(max_val)
-        op.str = op.fmt:format(key1, key2, val, upd)
+        local val1 = math.random(max_key)
+        local val2 = math.random(max_key)
+        local upd1 = math.random(max_key)
+        local upd2 = math.random(max_key)
+        op.str = op.fmt:format(key1, key2, val1, val2, upd1, upd2)
     end
     return op
 end
@@ -315,17 +417,49 @@ local function gen_stmts()
     txs_stop(txs)
 end
 
+local function is_less(lhs, rhs)
+    assert(lhs ~= nil and rhs ~= nil and
+           box.tuple.is(lhs) and box.tuple.is(rhs))
+
+    if lhs[1] < rhs[1] then
+        return true
+    elseif lhs[1] > rhs[1] then
+        return false
+    end
+
+    if lhs[2] < rhs[2] then
+        return true
+    elseif lhs[2] > rhs[2] then
+        return false
+    end
+
+    return false
+end
+
 local function is_equal(lhs, rhs)
     if lhs == nil and rhs == nil then return true end
     if lhs == nil or rhs == nil then return false end
-    local lhs_t = box.tuple.is(lhs) and 'table' or type(lhs)
-    local rhs_t = box.tuple.is(rhs) and 'table' or type(rhs)
+
+    local lhs_t = type(lhs)
+    local rhs_t = type(rhs)
     if lhs_t ~= rhs_t then return false end
     if lhs_t ~= 'table' then return lhs == rhs end
-    for k, v in pairs(lhs) do
+
+    if type(lhs[1]) == 'table' then
+        require('log').info("before sort lhs: %s", json.encode(lhs))
+        require('log').info("before sort rhs: %s", json.encode(rhs))
+
+        table.sort(lhs, is_less)
+        table.sort(rhs, is_less)
+
+        require('log').info("after sort lhs: %s", json.encode(lhs))
+        require('log').info("after sort rhs: %s", json.encode(rhs))
+    end
+
+    for k, v in ipairs(lhs) do
         if not is_equal(rhs[k], v) then return false end
     end
-    for k, v in pairs(rhs) do
+    for k, v in ipairs(rhs) do
         if not is_equal(lhs[k], v) then return false end
     end
     return true
@@ -465,13 +599,41 @@ local function close_files()
 end
 
 g.test_tx_man = function()
-    while true do
-        open_files()
+    open_files()
 
+    repro_file:write("os.execute('rm -rf *.snap *.xlog *.vylog 512')\n" ..
+                     '\n' ..
+                     "local ffi = require('ffi')\n" ..
+                     "local json = require('json')\n" ..
+                     "local log = require('log')\n" ..
+                     "local txn_proxy = require('txn_proxy')\n" ..
+                     '\n' ..
+                     'box.cfg{memtx_use_mvcc_engine = true}\n' ..
+                     '\n' ..
+                     "box.schema.space.create('s')\n" ..
+                     "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
+                     "                                         {2, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk1', {type = 'HASH', \n" ..
+                     "                                 parts = {{1, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk2', {type = 'BITSET', \n" ..
+                     "                                 unique = false,\n" ..
+                     "                                 parts = {{2, 'uint'}}})\n" ..
+                     "box.space.s:create_index('sk3', {type = 'RTREE', \n" ..
+                     "                                 unique = false,\n" ..
+                     "                                 parts = {{3, 'array'}}})\n")
+    for i = 1, tx_cnt do
+        repro_file:write(('local tx%d = txn_proxy:new()\n'):format(i))
+    end
+
+    while true do
         g.memtx_mvcc:exec(function()
             local s = box.schema.space.create('s')
             s:create_index('pk', {parts = {{1, 'uint'}, {2, 'uint'}}})
-            s:create_index('sk', {unique = false, parts = {{3, 'uint'}}})
+            s:create_index('sk1', {type = 'HASH', parts = {{1, 'uint'}}})
+            s:create_index('sk2', {type = 'BITSET', unique = false,
+                                   parts = {{2, 'uint'}}})
+            s:create_index('sk3', {type = 'RTREE', unique = false,
+                                   parts = {{3, 'array'}}})
         end)
 
         stmts = {}
@@ -480,6 +642,21 @@ g.test_tx_man = function()
         bad_dml_txs_mask = {}
         gen_stmts()
 
+        repro_file:write('\n')
+        dump_repro()
+        repro_file:write('box.space.s:drop()\n' ..
+                         "box.schema.space.create('s')\n" ..
+                         "box.space.s:create_index('pk', {parts = {{1, 'uint'}, \n" ..
+                         "                                         {2, 'uint'}}})\n" ..
+                         "box.space.s:create_index('sk1', {type = 'HASH', \n" ..
+                         "                                 parts = {{1, 'uint'}}})\n" ..
+                         "box.space.s:create_index('sk2', {type = 'BITSET', \n" ..
+                         "                                 unique = false,\n" ..
+                         "                                 parts = {{2, 'uint'}}})\n" ..
+                         "box.space.s:create_index('sk3', {type = 'RTREE', \n" ..
+                         "                                 unique = false,\n" ..
+                         "                                 parts = {{3, 'array'}}})\n")
+
         g.memtx_mvcc:exec(function()
             box.space.s:drop()
         end)
@@ -487,7 +664,11 @@ g.test_tx_man = function()
         g.memtx:exec(function()
             local s = box.schema.space.create('s')
             s:create_index('pk', {parts = {{1, 'uint'}, {2, 'uint'}}})
-            s:create_index('sk', {unique = false, parts = {{3, 'uint'}}})
+            s:create_index('sk1', {type = 'HASH', parts = {{1, 'uint'}}})
+            s:create_index('sk2', {type = 'BITSET', unique = false,
+                                   parts = {{2, 'uint'}}})
+            s:create_index('sk3', {type = 'RTREE', unique = false,
+                                   parts = {{3, 'array'}}})
         end)
 
         serialization = {}
@@ -496,6 +677,6 @@ g.test_tx_man = function()
             box.space.s:drop()
         end)
 
-        close_files()
+        --close_files()
     end
 end
