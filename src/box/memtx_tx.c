@@ -1927,16 +1927,32 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 		collected_conflicts = collected_conflicts->next;
 	}
 
-	if (replaced_story != NULL)
+	if (replaced_story != NULL) {
 		replaced_story->link[0].in_index = NULL;
+		/*
+		 * The replaced story can potentially get garbage collected, so
+		 * we need to temporarily make it invisible for garbage
+		 * collection.
+		 */
+		if (txm.traverse_all_stories == &replaced_story->in_all_stories)
+			txm.traverse_all_stories =
+				rlist_next(txm.traverse_all_stories);
+		rlist_del(&replaced_story->in_all_stories);
+	}
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	for (uint32_t i = 1; i < space->index_count; i++) {
 		if (directly_replaced[i] == NULL) {
 			rc = memtx_tx_handle_gap_write(stmt->txn, space,
 						       add_story, new_tuple,
 						       direct_successor[i], i);
-			if (rc != 0)
+			if (rc != 0) {
+				if (replaced_story != NULL) {
+					struct rlist *gc_link =
+						&replaced_story->in_all_stories;
+					rlist_add(&txm.all_stories, gc_link);
+				}
 				goto fail;
+			}
 			continue;
 		}
 		assert(tuple_has_flag(directly_replaced[i], TUPLE_IS_DIRTY));
@@ -1946,6 +1962,8 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 		secondary_replaced->link[i].in_index = NULL;
 	}
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
+	if (replaced_story != NULL)
+		rlist_add(&txm.all_stories, &replaced_story->in_all_stories);
 
 	if (old_tuple != NULL) {
 		assert(tuple_has_flag(old_tuple, TUPLE_IS_DIRTY));
