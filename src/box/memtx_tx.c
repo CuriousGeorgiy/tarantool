@@ -1141,6 +1141,8 @@ memtx_tx_track_read_story_slow(struct txn *txn, struct memtx_story *story,
  * Unlink a @a story from history chain in @a index in both directions.
  * If the story was in the top of history chain - unlink from top.
  * Simply remove from list otherwise.
+ *
+ * NB: can trigger story garbage collection.
  */
 static void
 memtx_tx_story_unlink_both(struct memtx_story *story, uint32_t idx)
@@ -1553,7 +1555,9 @@ check_dup_clean(struct txn_stmt *stmt, struct tuple *new_tuple,
 	if (memtx_tx_check_dup(new_tuple, *old_tuple, replaced[0],
 			       mode, space->index[0], space) != 0) {
 		if (replaced[0] != NULL)
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 			memtx_tx_track_read(txn, space, replaced[0]);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 		return -1;
 	}
 
@@ -1577,7 +1581,9 @@ check_dup_clean(struct txn_stmt *stmt, struct tuple *new_tuple,
 			if (memtx_tx_check_dup(new_tuple, replaced[0],
 					       replaced[i], DUP_INSERT,
 					       space->index[i], space) != 0) {
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 				memtx_tx_track_read(txn, space, replaced[i]);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 				return -1;
 			}
 			continue;
@@ -1597,7 +1603,9 @@ check_dup_clean(struct txn_stmt *stmt, struct tuple *new_tuple,
 
 		if (memtx_tx_check_dup(new_tuple, replaced[0], check_visible,
 				       DUP_INSERT, space->index[i], space) != 0) {
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 			memtx_tx_track_read(txn, space, check_visible);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 			return -1;
 		}
 
@@ -1730,6 +1738,8 @@ memtx_tx_track_read_story(struct txn *txn, struct space *space,
 /**
  * Handle insertion to a new place in index. There can be readers which
  * have read from this gap and thus must be sent to read view or conflicted.
+ *
+ * NB: can trigger story garbage collection.
  */
 static int
 memtx_tx_handle_gap_write(struct txn *txn, struct space *space,
@@ -1757,6 +1767,7 @@ memtx_tx_handle_gap_write(struct txn *txn, struct space *space,
 	}
 	uint64_t index_mask = 1ull << (ind & 63);
 	struct gap_item *item, *tmp;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	rlist_foreach_entry_safe(item, list, in_nearby_gaps, tmp) {
 		bool is_split = false;
 		if (item->key == NULL) {
@@ -1815,6 +1826,7 @@ memtx_tx_handle_gap_write(struct txn *txn, struct space *space,
 				  &copy->in_nearby_gaps);
 		}
 	}
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 }
 
@@ -1825,6 +1837,8 @@ memtx_tx_handle_gap_write(struct txn *txn, struct space *space,
  * REPLACE, and old_tuple is NULL because it is unknown yet.
  * INSERT, and old_tuple is NULL because there's no such tuple.
  * UPDATE, and old_tuple is not NULL and is the updated tuple.
+ *
+ * NB: can trigger story garbage collection.
  */
 static int
 memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
@@ -1896,9 +1910,11 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 		replaced_story = memtx_tx_story_get(replaced);
 		memtx_tx_story_link_top_light(add_story, replaced_story, 0);
 	} else {
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		rc = memtx_tx_handle_gap_write(stmt->txn, space,
 					       add_story, new_tuple,
 					       direct_successor[0], 0);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 		if (rc != 0)
 			goto fail;
 	}
@@ -1913,6 +1929,7 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 
 	if (replaced_story != NULL)
 		replaced_story->link[0].in_index = NULL;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	for (uint32_t i = 1; i < space->index_count; i++) {
 		if (directly_replaced[i] == NULL) {
 			rc = memtx_tx_handle_gap_write(stmt->txn, space,
@@ -1928,6 +1945,7 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 		memtx_tx_story_link_top_light(add_story, secondary_replaced, i);
 		secondary_replaced->link[i].in_index = NULL;
 	}
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 
 	if (old_tuple != NULL) {
 		assert(tuple_has_flag(old_tuple, TUPLE_IS_DIRTY));
@@ -1966,8 +1984,9 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 		 */
 		tuple_ref(*result);
 	}
-
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 
 fail:
@@ -2001,6 +2020,8 @@ fail:
  * Helper of @sa memtx_tx_history_add_stmt, does actual work in case when
  * new_tuple == NULL and old_tuple is deleted (and obviously not NULL).
  * Just for understanding, that's a DELETE statement.
+ *
+ * NB: can trigger story garbage collection.
  */
 static int
 memtx_tx_history_add_delete_stmt(struct txn_stmt *stmt,
@@ -2035,7 +2056,9 @@ memtx_tx_history_add_delete_stmt(struct txn_stmt *stmt,
 		 */
 		tuple_ref(*result);
 	}
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 }
 
@@ -2434,6 +2457,8 @@ memtx_tx_history_commit_stmt(struct txn_stmt *stmt, size_t *bsize)
 /**
  * Helper of @sa memtx_tx_tuple_clarify.
  * Do actual work.
+ *
+ * NB: can trigger story garbage collection.
  */
 static struct tuple *
 memtx_tx_tuple_clarify_impl(struct txn *txn, struct space *space,
@@ -2481,7 +2506,9 @@ memtx_tx_tuple_clarify_impl(struct txn *txn, struct space *space,
 		 */
 		int shift = index->dense_id & 63;
 		uint64_t mask = result == NULL ? 1ull << shift : UINT64_MAX;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		memtx_tx_track_read_story(txn, space, story, mask);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	}
 	if (mk_index != 0) {
 		assert(false); /* TODO: multiindex */
@@ -2517,6 +2544,8 @@ detect_whether_prepared_ok(struct txn *txn)
 /**
  * Helper of @sa memtx_tx_tuple_clarify.
  * Detect is_prepared_ok flag and pass the job to memtx_tx_tuple_clarify_impl.
+ *
+ * NB: can trigger story garbage collection.
  */
 struct tuple *
 memtx_tx_tuple_clarify_slow(struct txn *txn, struct space *space,
@@ -2524,8 +2553,10 @@ memtx_tx_tuple_clarify_slow(struct txn *txn, struct space *space,
 			    uint32_t mk_index)
 {
 	bool is_prepared_ok = detect_whether_prepared_ok(txn);
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	return memtx_tx_tuple_clarify_impl(txn, space, tuple, index, mk_index,
 					   is_prepared_ok);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 }
 
 uint32_t
@@ -2641,6 +2672,9 @@ tx_read_tracker_new(struct txn *reader, struct memtx_story *story,
 	return tracker;
 }
 
+/*
+ * NB: can trigger story garbage collection.
+ */
 static int
 memtx_tx_track_read_story_slow(struct txn *txn, struct memtx_story *story,
 			       uint64_t index_mask)
@@ -2677,10 +2711,15 @@ memtx_tx_track_read_story_slow(struct txn *txn, struct memtx_story *story,
 	}
 	rlist_add(&story->reader_list, &tracker->in_reader_list);
 	rlist_add(&txn->read_set, &tracker->in_read_set);
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 }
 
+/*
+ * NB: can trigger story garbage collection.
+ */
 static int
 memtx_tx_track_read_story(struct txn *txn, struct space *space,
 			  struct memtx_story *story, uint64_t index_mask)
@@ -2691,7 +2730,9 @@ memtx_tx_track_read_story(struct txn *txn, struct space *space,
 		return 0;
 	if (space->def->opts.is_ephemeral)
 		return 0;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	return memtx_tx_track_read_story_slow(txn, story, index_mask);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 }
 
 int
@@ -2708,7 +2749,9 @@ memtx_tx_track_read(struct txn *txn, struct space *space, struct tuple *tuple)
 
 	if (tuple_has_flag(tuple, TUPLE_IS_DIRTY)) {
 		struct memtx_story *story = memtx_tx_story_get(tuple);
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		return memtx_tx_track_read_story(txn, space, story, UINT64_MAX);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	} else {
 		/*
 		 * The tuple is not dirty therefore it is placed in pk
@@ -2901,6 +2944,9 @@ memtx_tx_gap_item_new(struct txn *txn, enum iterator_type type,
  * This function must be used for ordered indexes, such as TREE, for queries
  * when interation type is not EQ or when the key is not full (otherwise
  * it's faster to use memtx_tx_track_point).
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @return 0 on success, -1 on memory error.
  */
 int
@@ -2939,7 +2985,9 @@ memtx_tx_track_gap_slow(struct txn *txn, struct space *space, struct index *inde
 	} else {
 		rlist_add(&index->nearby_gaps, &item->in_nearby_gaps);
 	}
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 }
 
@@ -2964,6 +3012,9 @@ memtx_tx_full_scan_item_new(struct txn *txn)
  * Record in TX manager that a transaction @a txn have read full @ a index.
  * This function must be used for unordered indexes, such as HASH, for queries
  * when interation type is ALL.
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @return 0 on success, -1 on memory error.
  */
 int
@@ -2977,7 +3028,9 @@ memtx_tx_track_full_scan_slow(struct txn *txn, struct index *index)
 		return -1;
 
 	rlist_add(&index->full_scans, &item->in_full_scans);
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	return 0;
 }
 
@@ -3048,9 +3101,11 @@ memtx_tx_snapshot_cleaner_create(struct memtx_tx_snapshot_cleaner *cleaner,
 	struct memtx_story *story;
 	rlist_foreach_entry(story, &space->memtx_stories, in_space_stories) {
 		struct tuple *tuple = story->tuple;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		struct tuple *clean =
 			memtx_tx_tuple_clarify_impl(NULL, space, tuple,
 						    space->index[0], 0, true);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 		if (clean == tuple)
 			continue;
 

@@ -379,7 +379,11 @@ memtx_tx_history_prepare_stmt(struct txn_stmt *stmt);
 void
 memtx_tx_history_commit_stmt(struct txn_stmt *stmt, size_t *bsize);
 
-/** Helper of memtx_tx_tuple_clarify */
+/**
+ * Helper of memtx_tx_tuple_clarify.
+ *
+ * NB: can trigger story garbage collection.
+ */
 struct tuple *
 memtx_tx_tuple_clarify_slow(struct txn *txn, struct space *space,
 			    struct tuple *tuples, struct index *index,
@@ -387,6 +391,9 @@ memtx_tx_tuple_clarify_slow(struct txn *txn, struct space *space,
 
 /**
  * Record in TX manager that a transaction @txn have read a @tuple in @space.
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @return 0 on success, -1 on memory error.
  */
 int
@@ -421,6 +428,8 @@ memtx_tx_track_point(struct txn *txn, struct space *space,
 
 /**
  * Helper of memtx_tx_track_gap.
+ *
+ * NB: can trigger story garbage collection.
  */
 int
 memtx_tx_track_gap_slow(struct txn *txn, struct space *space, struct index *index,
@@ -434,6 +443,9 @@ memtx_tx_track_gap_slow(struct txn *txn, struct space *space, struct index *inde
  * This function must be used for ordered indexes, such as TREE, for queries
  * when interation type is not EQ or when the key is not full (otherwise
  * it's faster to use memtx_tx_track_point).
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @return 0 on success, -1 on memory error.
  */
 static inline int
@@ -448,12 +460,16 @@ memtx_tx_track_gap(struct txn *txn, struct space *space, struct index *index,
 	/* Skip ephemeral spaces. */
 	if (space == NULL || space->def->id == 0)
 		return 0;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	return memtx_tx_track_gap_slow(txn, space, index, successor,
 				       type, key, part_count);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 }
 
 /**
  * Helper of memtx_tx_track_full_scan.
+ *
+ * NB: can trigger story garbage collection.
  */
 int
 memtx_tx_track_full_scan_slow(struct txn *txn, struct index *index);
@@ -463,6 +479,9 @@ memtx_tx_track_full_scan_slow(struct txn *txn, struct index *index);
  * from @a space.
  * This function must be used for unordered indexes, such as HASH, for queries
  * when interation type is ALL.
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @return 0 on success, -1 on memory error.
  */
 static inline int
@@ -476,11 +495,16 @@ memtx_tx_track_full_scan(struct txn *txn, struct space *space,
 	/* Skip ephemeral spaces. */
 	if (space == NULL || space->def->id == 0)
 		return 0;
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	return memtx_tx_track_full_scan_slow(txn, index);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 }
 
 /**
  * Clean a tuple if it's dirty - finds a visible tuple in history.
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @param txn - current transactions.
  * @param space - space in which the tuple was found.
  * @param tuple - tuple to clean.
@@ -497,10 +521,14 @@ memtx_tx_tuple_clarify(struct txn *txn, struct space *space,
 	if (!memtx_tx_manager_use_mvcc_engine)
 		return tuple;
 	if (!tuple_has_flag(tuple, TUPLE_IS_DIRTY)) {
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		memtx_tx_track_read(txn, space, tuple);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 		return tuple;
 	}
+/********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	return memtx_tx_tuple_clarify_slow(txn, space, tuple, index, mk_index);
+/*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 }
 
 uint32_t
@@ -547,6 +575,9 @@ memtx_tx_on_space_delete(struct space *space);
 
 /**
  * Create a snapshot cleaner.
+ *
+ * NB: can trigger story garbage collection.
+ *
  * @param cleaner - cleaner to create.
  * @param space - space for which the cleaner must be created.
  */
