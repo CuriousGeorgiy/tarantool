@@ -577,7 +577,6 @@ name(struct iterator *iterator, struct tuple **ret)				\
 		if (rc != 0 || iterator->next_raw == tree_iterator_dummie)	\
 			return rc;						\
 	} while (*ret == NULL);							\
-	tree_iterator_set_current_tuple(it, *ret);				\
 	return 0;								\
 }										\
 struct forgot_to_add_semicolon
@@ -722,12 +721,8 @@ tree_iterator_start_raw(struct iterator *iterator, struct tuple **ret)
 		memtx_tx_track_gap(txn, space, idx, successor, type,
 				   it->key_data.key, it->key_data.part_count);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
-	if (res == NULL || !eq_match)
-		return 0;
-	if (*ret == NULL)
-		return iterator->next_raw(iterator, ret);
-	tree_iterator_set_current_tuple(it, *ret);
-	return 0;
+	return res == NULL || !eq_match || *ret != NULL ? 0 :
+	       iterator->next_raw(iterator, ret);
 }
 
 /* }}} */
