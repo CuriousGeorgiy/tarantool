@@ -1235,7 +1235,7 @@ memtx_tx_story_unlink_both_on_rollback(struct memtx_story *story, uint32_t idx)
 		if ((tracker->index_mask & index_mask) != 0) {
 			memtx_tx_track_read_story_slow(tracker->reader,
 						       rebind_story,
-						       index_mask);
+						       tracker->index_mask);
 			rlist_del(&tracker->in_reader_list);
 			rlist_del(&tracker->in_read_set);
 		}
