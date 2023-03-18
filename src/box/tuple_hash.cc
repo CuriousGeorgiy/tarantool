@@ -217,7 +217,7 @@ static const hasher_signature hash_arr[] = {
 
 #undef HASHER
 
-template <bool has_optional_parts, bool has_json_paths>
+template <bool has_optional_parts, bool has_json_paths, bool is_multikey>
 uint32_t
 tuple_hash_slowpath(struct tuple *tuple, struct key_def *key_def);
 
@@ -260,17 +260,29 @@ key_def_set_hash_func(struct key_def *key_def) {
 	}
 
 slowpath:
-	if (key_def->has_optional_parts) {
-		if (key_def->has_json_paths)
-			key_def->tuple_hash = tuple_hash_slowpath<true, true>;
-		else
-			key_def->tuple_hash = tuple_hash_slowpath<true, false>;
-	} else {
-		if (key_def->has_json_paths)
-			key_def->tuple_hash = tuple_hash_slowpath<false, true>;
-		else
-			key_def->tuple_hash = tuple_hash_slowpath<false, false>;
-	}
+	if (!key_def->has_optional_parts && !key_def->has_json_paths &&
+	    !key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<false, false, false>;
+	else if (!key_def->has_optional_parts && !key_def->has_json_paths &&
+		key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<false, false, true>;
+	else if (!key_def->has_optional_parts && key_def->has_json_paths &&
+		!key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<false, true, false>;
+	else if (!key_def->has_optional_parts && key_def->has_json_paths &&
+		key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<false, true, true>;
+	else if (key_def->has_optional_parts && !key_def->has_json_paths &&
+		!key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<true, false, false>;
+	else if (key_def->has_optional_parts && !key_def->has_json_paths &&
+		key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<true, false, true>;
+	else if (key_def->has_optional_parts && key_def->has_json_paths &&
+		!key_def->is_multikey)
+		key_def->tuple_hash = tuple_hash_slowpath<true, true, false>;
+	else
+		key_def->tuple_hash = tuple_hash_slowpath<true, true, true>;
 	key_def->key_hash = key_hash_slowpath;
 }
 
@@ -358,59 +370,94 @@ tuple_hash_key_part(uint32_t *ph1, uint32_t *pcarry, struct tuple *tuple,
 	return tuple_hash_field(ph1, pcarry, &field, part->coll);
 }
 
-template <bool has_optional_parts, bool has_json_paths>
+template <bool has_json_paths>
+const char *
+tuple_get_field(struct tuple *tuple, struct key_part *part,
+		uint32_t multikey_idx)
+{
+	struct tuple_format *format = tuple_format(tuple);
+	const char *tuple_raw = tuple_data(tuple);
+	const uint32_t *field_map = tuple_field_map(tuple);
+	if (has_json_paths) {
+		return tuple_field_raw_by_part(format, tuple_raw, field_map,
+					       part, (int)multikey_idx);
+	} else {
+		return tuple_field_raw(format, tuple_raw, field_map,
+				       part->fieldno);
+	}
+}
+
+template <bool has_optional_parts>
+void
+tuple_hash_part(uint32_t *h, uint32_t *carry, uint32_t *total_size,
+		const char *tuple_end, const char **field, struct coll *coll)
+{
+	if (has_optional_parts && (*field == NULL || *field >= tuple_end)) {
+		*total_size += tuple_hash_null(h, carry);
+	} else {
+		*total_size += tuple_hash_field(h, carry, field, coll);
+	}
+}
+
+template <bool has_optional_parts>
+uint32_t
+tuple_hash_slowpath_multikey(struct tuple *tuple, struct key_def *key_def)
+{
+	uint32_t h = HASH_SEED;
+	uint32_t carry = 0;
+	uint32_t total_size = 0;
+	struct tuple_format *format = tuple_format(tuple);
+	const char *tuple_raw = tuple_data(tuple);
+	const uint32_t *field_map = tuple_field_map(tuple);
+	uint32_t multikey_count = tuple_multikey_count(tuple, key_def);
+	const char *tuple_end = (char *)tuple + tuple_size(tuple);
+	for (uint32_t multikey_idx = 0; multikey_idx < multikey_count;
+	     ++multikey_idx) {
+		for (uint32_t part_idx = 0; part_idx < key_def->part_count;
+		     ++part_idx) {
+			const char *field = tuple_field_raw_by_part(
+				format, tuple_raw, field_map,
+				&key_def->parts[part_idx], (int)multikey_idx);
+			tuple_hash_part<has_optional_parts>(
+				&h, &carry, &total_size, tuple_end, &field,
+				key_def->parts[part_idx].coll);
+		}
+	}
+	return PMurHash32_Result(h, carry, total_size);
+}
+
+template <bool has_optional_parts, bool has_json_paths, bool is_multikey>
 uint32_t
 tuple_hash_slowpath(struct tuple *tuple, struct key_def *key_def)
 {
 	assert(has_json_paths == key_def->has_json_paths);
 	assert(has_optional_parts == key_def->has_optional_parts);
-	assert(!key_def->is_multikey);
+	assert(is_multikey == key_def->is_multikey);
+	assert(!(is_multikey ^ has_json_paths));
 	assert(!key_def->for_func_index);
+	if (is_multikey)
+		return tuple_hash_slowpath_multikey<has_optional_parts>(
+			tuple, key_def);
 	uint32_t h = HASH_SEED;
 	uint32_t carry = 0;
 	uint32_t total_size = 0;
 	uint32_t prev_fieldno = key_def->parts[0].fieldno;
-	struct tuple_format *format = tuple_format(tuple);
-	const char *tuple_raw = tuple_data(tuple);
-	const uint32_t *field_map = tuple_field_map(tuple);
-	const char *field;
-	if (has_json_paths) {
-		field = tuple_field_raw_by_part(format, tuple_raw, field_map,
-						key_def->parts, MULTIKEY_NONE);
-	} else {
-		field = tuple_field_raw(format, tuple_raw, field_map,
-					prev_fieldno);
-	}
-	const char *end = (char *)tuple + tuple_size(tuple);
-	if (has_optional_parts && field == NULL) {
-		total_size += tuple_hash_null(&h, &carry);
-	} else {
-		total_size += tuple_hash_field(&h, &carry, &field,
-					       key_def->parts[0].coll);
-	}
+	const char *field = tuple_get_field<has_json_paths>(
+		tuple, key_def->parts, MULTIKEY_NONE);
+	const char *tuple_end = (char *)tuple + tuple_size(tuple);
+	tuple_hash_part<has_optional_parts>(&h, &carry, &total_size, tuple_end,
+					    &field, key_def->parts[0].coll);
 	for (uint32_t part_id = 1; part_id < key_def->part_count; part_id++) {
 		/* If parts of key_def are not sequential we need to call
 		 * tuple_field. Otherwise, tuple is hashed sequentially without
 		 * need of tuple_field
 		 */
-		if (prev_fieldno + 1 != key_def->parts[part_id].fieldno) {
-			struct key_part *part = &key_def->parts[part_id];
-			if (has_json_paths) {
-				field = tuple_field_raw_by_part(format, tuple_raw,
-								field_map, part,
-								MULTIKEY_NONE);
-			} else {
-				field = tuple_field_raw(format, tuple_raw, field_map,
-						    part->fieldno);
-			}
-		}
-		if (has_optional_parts && (field == NULL || field >= end)) {
-			total_size += tuple_hash_null(&h, &carry);
-		} else {
-			total_size +=
-				tuple_hash_field(&h, &carry, &field,
-						 key_def->parts[part_id].coll);
-		}
+		if (prev_fieldno + 1 != key_def->parts[part_id].fieldno)
+			field = tuple_get_field<has_json_paths>(
+				tuple, &key_def->parts[part_id], MULTIKEY_NONE);
+		tuple_hash_part<has_optional_parts>(
+			&h, &carry, &total_size, tuple_end, &field,
+			key_def->parts[part_id].coll);
 		prev_fieldno = key_def->parts[part_id].fieldno;
 	}
 
