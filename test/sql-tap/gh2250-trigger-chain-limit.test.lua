@@ -75,12 +75,11 @@ for _, table_count in ipairs({30, 31}) do
 
     local function check(sql)
         local _, msg = pcall(function () test:execsql(sql) end)
-        msg = tostring(msg)
         test:do_test(sql,
                      function()
                          return true
                      end,
-                     table_count <= 30 or msg == 'Maximum number of chained trigger activations exceeded.')
+                     table_count <= 30 or msg.message == 'Maximum number of chained trigger activations exceeded.')
     end
 
     -- Exceed check for UPDATE

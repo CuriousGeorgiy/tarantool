@@ -65,7 +65,7 @@ g.test = function(cg)
         t.assert_equals(ok, compat.box_session_push_deprecation:is_old(),
                         'box.session.push status')
         if not ok then
-            t.assert_equals(tostring(err), 'box.session.push is deprecated',
+            t.assert_equals(err.message, 'box.session.push is deprecated',
                             'box.session.push error')
         end
     end)
@@ -84,7 +84,7 @@ g.test = function(cg)
         t.assert_equals(ok, compat.box_session_push_deprecation:is_old(),
                         'box.session.push status')
         if not ok then
-            t.assert_equals(tostring(err), 'box.session.push is deprecated',
+            t.assert_equals(err.message, 'box.session.push is deprecated',
                             'box.session.push error')
         end
     end)

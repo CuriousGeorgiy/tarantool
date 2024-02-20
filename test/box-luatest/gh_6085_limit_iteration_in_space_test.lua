@@ -33,7 +33,7 @@ g.test_limit_iteration = function()
             local fib = fiber.new(fiber_f)
             fib:set_joinable(true)
             local _, err = fib:join()
-            t.assert_equals(tostring(err), "fiber slice is exceeded")
+            t.assert_equals(err.message, "fiber slice is exceeded")
         end
 
         fiber.set_max_slice(0.2)
@@ -92,7 +92,7 @@ g.test_limit_on_sigurg = function()
     os.execute('kill -URG ' .. tonumber(pid))
     local _, err = future:wait_result(1.5)
     local end_time = clock.monotonic()
-    t.assert_equals(tostring(err), "fiber slice is exceeded")
+    t.assert_equals(err.message, "fiber slice is exceeded")
     -- Must end before slice is over.
     t.assert(end_time - start_time < 3)
 end

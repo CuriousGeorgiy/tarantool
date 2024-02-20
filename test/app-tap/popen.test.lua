@@ -96,7 +96,7 @@ local function test_trivial_echo_output(test)
     -- Sending a signal using a closed handle gives an error.
     local exp_err = 'popen: attempt to operate on a closed handle'
     local ok, err = pcall(ph.signal, ph, popen.signal.SIGTERM)
-    test:is_deeply({ok, err.type, tostring(err)},
+    test:is_deeply({ok, err.type, err.message},
                    {false, 'IllegalParams', exp_err},
                    'signal() on closed handle gives an error')
 end
@@ -247,7 +247,7 @@ local function test_read_timeout(test)
     -- Read and get a timeout error.
     local exp_err = 'timed out'
     local res, err = ph:read({timeout = 0.1})
-    test:is_deeply({res, err.type, tostring(err)}, {nil, 'TimedOut', exp_err},
+    test:is_deeply({res, err.type, err.message}, {nil, 'TimedOut', exp_err},
                    'timeout error')
 
     -- Write and read after the timeout error.

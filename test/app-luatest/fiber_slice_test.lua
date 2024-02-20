@@ -32,7 +32,7 @@ g.test_fiber_slice = function()
         overhead = clock.monotonic() - overhead
         local start_time = clock.monotonic()
         local _, err = fib:join()
-        t.assert_equals(tostring(err), "fiber slice is exceeded")
+        t.assert_equals(err.message, "fiber slice is exceeded")
         local time_elapsed = clock.monotonic() - start_time - overhead
         t.assert_almost_equals(time_elapsed, expected_timeout, delta)
     end

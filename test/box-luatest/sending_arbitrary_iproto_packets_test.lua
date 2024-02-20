@@ -116,10 +116,10 @@ g.test_box_iproto_send_errors = function(cg)
         s:close()
         local _, err = pcall(function() box.iproto.send(sid, {}) end)
         if err ~= nil then
-            t.assert_str_contains(tostring(err), 'Session is closed')
+            t.assert_str_contains(err.message, 'Session is closed')
         else
             err = _G.test_channel:get()
-            t.assert_str_contains(tostring(err), 'Session is closed')
+            t.assert_str_contains(err.message, 'Session is closed')
         end
     end)
 end

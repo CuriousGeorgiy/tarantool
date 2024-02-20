@@ -7,7 +7,7 @@ test:plan(119)
 
 local function test_invalid_cfg(cfg_method, cfg, name, expected)
     local _, err = pcall(cfg_method, cfg)
-    test:ok(tostring(err):find(expected) ~= nil, name)
+    test:ok(err.message:find(expected) ~= nil, name)
 end
 
 local function test_allowed_types(cfg_method, cfg, name, allowed_types)
@@ -205,11 +205,11 @@ test_invalid_cfg(box.cfg, {log_nonblock = true},
 -- Test invalid values for setters
 
 _, err = pcall(log.log_format, {})
-test:ok(tostring(err):find('should be of type string') ~= nil,
+test:ok(err.message:find('should be of type string') ~= nil,
         "invalid format setter value type")
 
 _, err = pcall(log.level, {})
-test:ok(tostring(err):find('should be one of types number, string') ~= nil,
+test:ok(err.message:find('should be one of types number, string') ~= nil,
         "invalid format setter value type")
 
 -- Change format and levels.

@@ -33,7 +33,7 @@ function mt._start_stderr_logger(self)
             local chunk, err = self.ph:read({stderr = true})
             if chunk == nil then
                 log.warn(('%s: got error, exitting: %s'):format(
-                    fiber_name, tostring(err)))
+                    fiber_name, err.message))
                 break
             end
             if chunk == '' then
@@ -123,7 +123,7 @@ function mt.read_until_prompt(self, opts)
 
     local stderr, err = self.ph:read({timeout = 0.05, stderr = true})
     if stderr ~= "" and not (stderr == nil and
-                             tostring(err) == "timed out") then
+                             err.message == "timed out") then
         error(("Unexpected stderr output: %s"):format(stderr))
     end
 

@@ -22,5 +22,5 @@ fiber.yield()
 print(require('yaml').encode(result))
 
 test:ok(result.res == false, 'expected result is false')
-test:ok(tostring(result.err) == 'fiber is cancelled', 'fiber cancellation should be reported')
+test:ok(result.err.message == 'fiber is cancelled', 'fiber cancellation should be reported')
 os.exit(test:check() and 0 or 1)

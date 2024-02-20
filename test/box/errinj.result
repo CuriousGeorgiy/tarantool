@@ -930,7 +930,7 @@ assert(not ok)
 ---
 - true
 ...
-assert(string.match(tostring(ret), 'Failed to allocate'))
+assert(string.match(ret.message, 'Failed to allocate'))
 ---
 - Failed to allocate
 ...

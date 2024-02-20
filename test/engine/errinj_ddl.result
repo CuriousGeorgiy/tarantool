@@ -347,7 +347,7 @@ assert(not ok)
 ---
 - true
 ...
-assert(tostring(err):find('Duplicate key') ~= nil)
+assert(err.message:find('Duplicate key') ~= nil)
 ---
 - true
 ...

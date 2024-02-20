@@ -99,9 +99,9 @@ local uri_table, errmsg
 local function test_error_message(uri_table, errmsg)
     errmsg = "Incorrect value for option 'listen': " .. errmsg
     local _, err = pcall(box.cfg, {listen = uri_table})
-    test:is(tostring(err), errmsg, "error message")
+    test:is(err.message, errmsg, "error message")
     _, err = pcall(box.cfg, {listen = uri_table})
-    test:is(tostring(err), errmsg, "error message")
+    test:is(err.message, errmsg, "error message")
 end
 
 -- Incorrect URI: expected host:service or /unix.socket

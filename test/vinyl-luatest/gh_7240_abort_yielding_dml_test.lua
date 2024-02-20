@@ -40,7 +40,7 @@ g.test_abort_yielding_dml = function(cg)
         local ch = fiber.channel(1)
         fiber.create(function()
             local ok, err = pcall(s.insert, s, {2, 20})
-            ch:put(ok or tostring(err))
+            ch:put(ok or err.message)
         end)
         -- The insert operation blocks on disk read to check uniqueness.
         t.assert_is(ch:get(0.1), nil)

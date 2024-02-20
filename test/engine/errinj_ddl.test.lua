@@ -160,7 +160,7 @@ test_run:cmd("setopt delimiter ''");
 errinj.set("ERRINJ_BUILD_INDEX_DELAY", true)
 ok, err = pcall(s.create_index, s, 'sk', {parts = {2, 'unsigned'}})
 assert(not ok)
-assert(tostring(err):find('Duplicate key') ~= nil)
+assert(err.message:find('Duplicate key') ~= nil)
 
 ch:get()
 

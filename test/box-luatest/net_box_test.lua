@@ -348,12 +348,12 @@ g.test_sync_request_in_trigger = function()
     local function trigger_cb()
         local status, err
         status, err = pcall(c.call, c, 'box.session.user', {timeout = 5})
-        ch:put(status or tostring(err))
+        ch:put(status or err)
         local fut = c:call('box.session.user', {}, {is_async = true})
         status, err = pcall(fut.wait_result, fut, 5)
-        ch:put(status or tostring(err))
+        ch:put(status or err)
         status, err = pcall(function() for _, _ in fut:pairs(5) do end end)
-        ch:put(status or tostring(err))
+        ch:put(status or err)
     end
     local function check()
         local msg = 'Synchronous requests are not allowed in net.box trigger'

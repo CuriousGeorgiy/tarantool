@@ -214,8 +214,10 @@ for _, case in ipairs(key_def_new_cases) do
                 ffi.istype('struct key_def', res)
             test:ok(ok, case[1])
         else
-            local err = tostring(res) -- cdata -> string
-            test:is_deeply({ok, err}, {false, case.exp_err}, case[1])
+            if type(res) == 'cdata' then
+                res = res.message
+            end
+            test:is_deeply({ok, res}, {false, case.exp_err}, case[1])
         end
     end
 end
@@ -290,7 +292,7 @@ test:test('extract_key()', function(test)
     })
     local ok, err = pcall(key_def.extract_key, key_def,
         box.tuple.new({'foo'}))
-    test:is_deeply({ok, tostring(err)}, {false, exp_err},
+    test:is_deeply({ok, err.message}, {false, exp_err},
         'short tuple with a non-nullable part (case 1)')
 
     -- Same as before, but a max fieldno is over tuple:len() + 1.
@@ -302,7 +304,7 @@ test:test('extract_key()', function(test)
     })
     local ok, err = pcall(key_def.extract_key, key_def,
         box.tuple.new({'foo'}))
-    test:is_deeply({ok, tostring(err)}, {false, exp_err},
+    test:is_deeply({ok, err.message}, {false, exp_err},
         'short tuple with a non-nullable part (case 2)')
 
     -- Same as before, but with another key def options:
@@ -316,7 +318,7 @@ test:test('extract_key()', function(test)
     })
     local ok, err = pcall(key_def.extract_key, key_def,
         box.tuple.new({'foo'}))
-    test:is_deeply({ok, tostring(err)}, {false, exp_err},
+    test:is_deeply({ok, err.message}, {false, exp_err},
         'short tuple with a non-nullable part (case 3)')
 
     -- A tuple has a field that does not match corresponding key
@@ -329,7 +331,7 @@ test:test('extract_key()', function(test)
         {type = 'string', fieldno = 3},
     })
     local ok, err = pcall(key_def.extract_key, key_def, {'one', 'two', 3})
-    test:is_deeply({ok, tostring(err)}, {false, exp_err},
+    test:is_deeply({ok, err.message}, {false, exp_err},
         'wrong field type')
 
     local key_def = key_def_lib.new({
@@ -340,7 +342,7 @@ test:test('extract_key()', function(test)
     })
     local ok, err = pcall(key_def.extract_key, key_def,
                           box.tuple.new({1, 1, 22}))
-    test:is_deeply({ok, tostring(err)},
+    test:is_deeply({ok, err.message},
                 {false, 'Tuple field [1]a required by space format is missing'},
                 'invalid JSON structure')
     test:is_deeply(key_def:extract_key({{a=1, b=2}, 1}):totable(),
@@ -393,7 +395,7 @@ test:test('compare()', function(test)
         {type = 'array', fieldno = 2, is_nullable = true},
     })
     local ok, err = pcall(key_def.compare, key_def, {'aa', {}}, {'bb', box.NULL})
-    test:is_deeply({ok, tostring(err)}, {false, cmp_err}, 'no composite comparison')
+    test:is_deeply({ok, err.message}, {false, cmp_err}, 'no composite comparison')
 end)
 
 -- Case: compare_with_key().
@@ -418,13 +420,13 @@ test:test('compare_with_key()', function(test)
         {type = 'map', fieldno = 2},
     })
     local ok, err = pcall(key_def.compare_with_key, key_def, {'aa', {}}, {'bb', box.NULL})
-    test:is_deeply({ok, tostring(err)}, {false, cmp_err}, 'no composite comparison')
+    test:is_deeply({ok, err.message}, {false, cmp_err}, 'no composite comparison')
 
     -- Unserializable key.
     local exp_err = "unsupported Lua type 'function'"
     local key = {function() end}
     local ok, err = pcall(key_def_b.compare_with_key, key_def_b, tuple_a, key)
-    test:is_deeply({ok, tostring(err)}, {false, exp_err}, 'unserializable key')
+    test:is_deeply({ok, err.message}, {false, exp_err}, 'unserializable key')
 end)
 
 -- Case: totable().

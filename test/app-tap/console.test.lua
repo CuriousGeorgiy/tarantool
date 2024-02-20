@@ -133,13 +133,13 @@ box.cfg{
 -- Connect to iproto console (CALL)
 client:write(string.format("require('console').connect('/')\n"))
 -- error: Connection is not established
-test:ok(yaml.decode(client:read(EOL))[1].error:find('not established'),
+test:ok(yaml.decode(client:read(EOL))[1].error.message:find('not established'),
     'remote network error')
 
 client:write(string.format("require('console').connect('%s')\n",
     IPROTO_SOCKET))
 -- error: Execute access is denied for user 'guest' to function 'dostring
-test:ok(yaml.decode(client:read(EOL))[1].error:find('denied'),
+test:ok(yaml.decode(client:read(EOL))[1].error.message:find('denied'),
     'remote access denied')
 
 -- create user
@@ -147,7 +147,7 @@ box.schema.user.create('test', { password = 'pass' })
 client:write(string.format("require('console').connect('test:pass@%s')\n",
     IPROTO_SOCKET))
 -- error: Execute access denied for user 'test' to function 'dostring
-test:ok(yaml.decode(client:read(EOL))[1].error:find('denied'),
+test:ok(yaml.decode(client:read(EOL))[1].error.message:find('denied'),
     'remote access denied')
 
 -- Add permissions to execute for `test`

@@ -90,10 +90,10 @@ local function test_parse(test)
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     u, error = uri.parse("")
     test:isnil(u, "invalid uri", u)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     u, error = uri.parse("://")
     test:isnil(u, "invalid uri", u)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 end
 
 local function test_format(test)
@@ -245,13 +245,13 @@ local function test_parse_uri_query_params(test)
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     u, error = uri.parse({ "/tmp/unix.sock", default_params = {q = "v"} })
     test:isnil(u, "invalid uri", u)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Multiple URIs is not allowed in `parse` method,
     -- use `parse_many` instead.
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     u, error = uri.parse({ "/tmp/unix.sock, /tmp/unix.sock"})
     test:isnil(u, "invalid uri", u)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 end
 
 local function test_parse_uri_set_with_query_params(test)
@@ -314,16 +314,16 @@ local function test_parse_uri_set_with_query_params(test)
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     uri_set , error= uri.parse_many("/tmp/unix.sock,,/tmp/unix.sock")
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     uri_set, error = uri.parse_many("/tmp/unix.sock, ,/tmp/unix.sock")
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     uri_set, error = uri.parse_many("/tmp/unix.sock,, /tmp/unix.sock")
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     uri_set, error = uri.parse_many("/tmp/unix.sock ,,/tmp/unix.sock")
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 
 
     -- Check that we can't parse string with multiple URIs,
@@ -331,7 +331,7 @@ local function test_parse_uri_set_with_query_params(test)
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     local u, error = uri.parse("/tmp/unix.sock, /tmp/unix.sock")
     test:isnil(u, "invalid uri", u)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 end
 
 local function test_parse_uri_set_from_lua_table(test)
@@ -575,35 +575,35 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
     expected_errmsg = "Incorrect type for URI: should be string, number or table"
     uri_set, error = uri.parse_many(function() end)
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Invalid type of value for numerical key
     expected_errmsg = "Incorrect type for URI: should be string, number or table"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", function() end})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Invalid type of value for string keys
     expected_errmsg = "Invalid URI table: expected " ..
                       "{uri = string, params = table}" .. " or " ..
                       "{string, params = table}"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", uri = function() end})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Incorrect type for URI parameters: should be a table"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", params = function() end})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Incorrect type for URI parameters: should be a table"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", params = ""})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", default_params = ""})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", default_params = ""})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 
     -- Mix "uri=" and numerical keys is banned
     expected_errmsg = "Invalid URI table: expected " ..
@@ -611,13 +611,13 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
                       "{string, params = table}"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", uri = "/tmp/unix.sock"})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Several URIs in one string is allowed only when the
     -- passed as a single string.
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     uri_set, error = uri.parse_many({"/tmp/unix.sock, /tmp/unix.sock"})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- "params" table is allowed only for single URI
     expected_errmsg = "URI parameters are not allowed for multiple URIs"
     uri_set, error = uri.parse_many({
@@ -625,7 +625,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         params = {q1 = "v1"}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- "params" table is not allowed with nested tables
     expected_errmsg = "URI parameters are not allowed for multiple URIs"
     uri_set, error = uri.parse_many({
@@ -633,17 +633,17 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         params = {q1 = "v1"}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- "default_params" table is not allowed in nested URI tables
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({{"/tmp/unix.sock", default_params = {}}})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- "default_params" table is not allowed for single URI
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({"/tmp/unix.sock", default_params = {}})
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Only one URI is allowed in nested tables
     expected_errmsg = "Invalid URI table: expected " ..
                       "{uri = string, params = table}" .. " or " ..
@@ -653,7 +653,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         default_params = {q = "v"}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Nested URI tables is not allowed in nested tables
     expected_errmsg = "Invalid URI table: expected "..
                       "{uri = string, params = table}" .. " or " ..
@@ -662,7 +662,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         {"/tmp/unix.sock", {}}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Nested URI table without URI is now allowed
     expected_errmsg = "Invalid URI table: expected "..
                       "{uri = string, params = table}" .. " or " ..
@@ -672,7 +672,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         { params = {q = "v"} }
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Only string key types are allowed in "params" and
     -- "default_params" table
     expected_errmsg = "Incorrect type for URI parameter name: " ..
@@ -682,14 +682,14 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         params = {"v"},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({
         "/tmp/unix.sock",
         default_params = {"v"},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Invalid type of values in "params" and
     -- "default_params" table
     expected_errmsg = "Incorrect type for URI parameter value: " ..
@@ -699,14 +699,14 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         params = {q = function() end},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({
         "/tmp/unix.sock",
         default_params = {q = function() end},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Incorrect type for URI parameter value: "..
                       "should be string or number"
     uri_set, error = uri.parse_many({
@@ -714,14 +714,14 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         params = {q = {function() end}},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     expected_errmsg = "Default URI parameters are not allowed for single URI"
     uri_set, error = uri.parse_many({
         "/tmp/unix.sock",
         default_params = {q = {function() end}},
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Invalid uri string in URIs table
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     uri_set, error = uri.parse_many({
@@ -729,7 +729,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         "://"
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Invalid uri in nested URI table
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     uri_set, error = uri.parse_many({
@@ -737,7 +737,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         {"://"}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
     -- Same as previous but with "uri=" syntax
     expected_errmsg = "Incorrect URI: expected host:service or /unix.socket"
     uri_set, error = uri.parse_many({
@@ -745,7 +745,7 @@ local function test_parse_invalid_uri_set_from_lua_table(test)
         {uri = "://"}
     })
     test:isnil(uri_set, "invalid uri", uri_set)
-    test:is(tostring(error), expected_errmsg, "error message")
+    test:is(error.message, expected_errmsg, "error message")
 end
 
 local test = tap.test("uri")

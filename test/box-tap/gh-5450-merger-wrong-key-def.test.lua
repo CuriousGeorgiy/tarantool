@@ -20,7 +20,7 @@ local exp_err = "Field 6 has type 'string' in one index, but type " ..
 -- format.
 local sources = {}
 local ok, err = pcall(merger.new, key_def, sources)
-test:is_deeply({ok, tostring(err)}, {false, exp_err},
+test:is_deeply({ok, err.message}, {false, exp_err},
                'unable to create a tuple format')
 
 os.exit(test:check() and 0 or 1)

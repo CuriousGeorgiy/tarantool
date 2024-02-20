@@ -593,7 +593,9 @@ end
 for _, case in ipairs(bad_merger_select_calls) do
     local merger_inst = merger.new(key_def, case.sources)
     local ok, err = pcall(merger_inst.select, merger_inst, case.opts)
-    err = tostring(err) -- cdata -> string
+    if not ok and type(err) == 'cdata' then
+        err = err.message -- cdata -> string
+    end
     test:is_deeply({ok, err}, {false, case.exp_err}, case[1])
 end
 

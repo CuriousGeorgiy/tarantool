@@ -45,7 +45,7 @@ test_run:wait_cond(function() return f:status() == 'dead' end)
 ---
 - true
 ...
-assert(tostring(result) == 'Peer closed')
+assert(result.message == 'Peer closed')
 ---
 - true
 ...

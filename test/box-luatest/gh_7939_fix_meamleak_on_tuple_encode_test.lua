@@ -176,12 +176,12 @@ g.test_misc_region_leaks = function(cg)
             }
         ');]])
         t.assert_equals(ret, nil)
-        t.assert_equals(tostring(err), errmsg)
+        t.assert_equals(err.message, errmsg)
         t.assert_equals(before, mem_used())
 
         ret, err = box.execute('SELECT ?;', {{trouble}})
         t.assert_equals(ret, nil)
-        t.assert_equals(tostring(err), errmsg)
+        t.assert_equals(err.message, errmsg)
         t.assert_equals(before, mem_used())
     end)
 end

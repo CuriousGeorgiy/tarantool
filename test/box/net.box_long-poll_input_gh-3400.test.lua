@@ -23,5 +23,5 @@ end)
 pcall(c._request, c, 'INJECT', nil, nil, nil, '\x80')
 test_run:cmd("setopt delimiter ''");
 test_run:wait_cond(function() return f:status() == 'dead' end)
-assert(tostring(result) == 'Peer closed')
+assert(result.message == 'Peer closed')
 c:close()

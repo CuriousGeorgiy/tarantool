@@ -17,7 +17,7 @@ local function collect_stderr(ph)
             local chunk, err = ph:read({stderr = true})
             if chunk == nil then
                 log.warn(('%s: got error, exiting: %s'):format(
-                    fiber_name, tostring(err)))
+                    fiber_name, err.message))
                 break
             end
             if chunk == '' then

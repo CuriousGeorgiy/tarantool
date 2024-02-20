@@ -485,7 +485,7 @@ g.test_headers = function(cg)
     local headers = {[hname] = hvalue}
     local ok, err = pcall(http.post, http, url, nil,
                           merge(opts, {headers = headers}))
-    t.assert_equals({ok, tostring(err)}, {false, exp_err},
+    t.assert_equals({ok, err.message}, {false, exp_err},
                     '8193 KiB header: error')
 end
 
