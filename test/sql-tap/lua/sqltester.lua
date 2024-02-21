@@ -183,7 +183,7 @@ local function catchsql(self, sql)
     else
         r[1] = 1
         if type(r[2]) == 'cdata' then
-            r[2] = tostring(r[2])
+            r[2] = r[2].message
         end
     end
     return r
@@ -274,7 +274,7 @@ local function catchsql2(self, sql)
     -- 1 means not ok
     r[1] = r[1] == true and 0 or 1
     if r[1] == 1 then
-        r[2] = tostring(r[2])
+        r[2] = r[2].message
     end
     return r
 end

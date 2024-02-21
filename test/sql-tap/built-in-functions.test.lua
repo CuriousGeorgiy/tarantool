@@ -133,7 +133,7 @@ test:do_test(
     "builtins-2.2",
     function()
         local res = {pcall(box.execute, [[SELECT CHAR_LENGTH(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -153,7 +153,7 @@ test:do_test(
     "builtins-2.4",
     function()
         local res = {pcall(box.execute, [[SELECT CHARACTER_LENGTH(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -173,7 +173,7 @@ test:do_test(
     "builtins-2.6",
     function()
         local res = {pcall(box.execute, [[SELECT CHAR(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to integer"
     })
@@ -193,7 +193,7 @@ test:do_test(
     "builtins-2.8",
     function()
         local res = {pcall(box.execute, [[SELECT HEX(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to varbinary"
     })
@@ -213,7 +213,7 @@ test:do_test(
     "builtins-2.10",
     function()
         local res = {pcall(box.execute, [[SELECT LENGTH(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -233,7 +233,7 @@ test:do_test(
     "builtins-2.12",
     function()
         local res = {pcall(box.execute, [[SELECT ? LIKE '%';]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -253,7 +253,7 @@ test:do_test(
     "builtins-2.14",
     function()
         local res = {pcall(box.execute, [[SELECT LOWER(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -273,7 +273,7 @@ test:do_test(
     "builtins-2.16",
     function()
         local res = {pcall(box.execute, [[SELECT UPPER(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -293,7 +293,7 @@ test:do_test(
     "builtins-2.18",
     function()
         local res = {pcall(box.execute, [[SELECT POSITION(?, ?);]], {1, 1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -313,7 +313,7 @@ test:do_test(
     "builtins-2.20",
     function()
         local res = {pcall(box.execute, [[SELECT RANDOMBLOB(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to integer"
     })
@@ -333,7 +333,7 @@ test:do_test(
     "builtins-2.22",
     function()
         local res = {pcall(box.execute, [[SELECT ZEROBLOB(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to integer"
     })
@@ -353,7 +353,7 @@ test:do_test(
     "builtins-2.24",
     function()
         local res = {pcall(box.execute, [[SELECT SOUNDEX(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -373,7 +373,7 @@ test:do_test(
     "builtins-2.26",
     function()
         local res = {pcall(box.execute, [[SELECT UNICODE(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -393,7 +393,7 @@ test:do_test(
     "builtins-2.28",
     function()
         local res = {pcall(box.execute, [[SELECT ABS(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to decimal"
     })
@@ -413,7 +413,7 @@ test:do_test(
     "builtins-2.30",
     function()
         local res = {pcall(box.execute, [[SELECT ROUND(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to decimal"
     })
@@ -433,7 +433,7 @@ test:do_test(
     "builtins-2.32",
     function()
         local res = {pcall(box.execute, [[SELECT UUID(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to integer"
     })
@@ -453,7 +453,7 @@ test:do_test(
     "builtins-2.34",
     function()
         local res = {pcall(box.execute, [[SELECT SUM(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to decimal"
     })
@@ -473,7 +473,7 @@ test:do_test(
     "builtins-2.36",
     function()
         local res = {pcall(box.execute, [[SELECT AVG(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to decimal"
     })
@@ -493,7 +493,7 @@ test:do_test(
     "builtins-2.38",
     function()
         local res = {pcall(box.execute, [[SELECT TOTAL(?);]], {'1'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('1') to decimal"
     })
@@ -590,7 +590,7 @@ test:do_test(
     "builtins-4.6",
     function()
         local res = {pcall(box.execute, [[SELECT LENGTH(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -615,7 +615,7 @@ test:do_test(
     "builtins-4.9",
     function()
         local res = {pcall(box.execute, [[SELECT POSITION(?, ?);]], {1, 1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })
@@ -648,7 +648,7 @@ test:do_test(
     "builtins-4.13",
     function()
         local res = {pcall(box.execute, [[SELECT TOTAL(?);]], {'a'})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert string('a') to decimal"
     })
@@ -657,7 +657,7 @@ test:do_test(
     "builtins-4.14",
     function()
         local res = {pcall(box.execute, [[SELECT TRIM(?);]], {1})}
-        return {tostring(res[3])}
+        return {res[3].message}
     end, {
         "Type mismatch: can not convert integer(1) to string"
     })

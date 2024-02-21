@@ -87,7 +87,7 @@ test:do_test(
     function()
         local def = {aggregate = 'group', exports = {'LUA', 'SQL'}}
         local res = {pcall(box.schema.func.create, 'F4', def)}
-        return {tostring(res[2])}
+        return {res[2].message}
     end, {
         "Failed to create function 'F4': aggregate function can only be "..
         "accessed in SQL"
@@ -99,7 +99,7 @@ test:do_test(
     function()
         local def = {aggregate = 'group', exports = {'SQL'}}
         local res = {pcall(box.schema.func.create, 'F4', def)}
-        return {tostring(res[2])}
+        return {res[2].message}
     end, {
         "Failed to create function 'F4': aggregate function must have at "..
         "least one argument"
