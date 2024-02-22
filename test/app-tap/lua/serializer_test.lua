@@ -532,9 +532,9 @@ local function test_error(test, s)
         encode_load_metatables = true,
     }
     local err2 = s.decode(s.encode(err))
-    test:is(type(err2), 'string', 'encode/decode error as str - type')
-    test:is(err2, 'Illegal parameters, test',
-            'encode/decode error as str - value')
+    test:is(type(err2), 'table', 'encode/decode error as table - type')
+    test:is_deeply(t, err2,
+            'encode/decode error as table - value')
     msgpack.cfg{
         encode_error_as_ext = encode_error_as_ext,
         encode_load_metatables = encode_load_metatables,

@@ -4,7 +4,6 @@
 
 pcall inside xpcall:	true	pcall is ok
 pcall with Lua error():	false	some message
-pcall with box.error():	false	Illegal parameters, some message
 pcall with box.error(): typeof	ctype<const struct error &>
 pcall with box.error(): .type	ClientError
 pcall with box.error(): .code	1

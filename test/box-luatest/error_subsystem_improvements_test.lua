@@ -1,4 +1,6 @@
+local compat = require('compat')
 local t = require('luatest')
+local json = require('json')
 local g = t.group()
 
 -- Test the `prev' argument to the table constructor of `box.error.new'
@@ -137,4 +139,49 @@ g.test_payload_inheritance = function()
     t.assert_equals(e3.foo, 11) -- Inherited from e1.
     t.assert_equals(e3.bar, 33) -- Inherited from e2.
     t.assert_equals(e3.baz, 55) -- Own payload field.
+end
+
+-- Test the increased `box.error` serialization verbosity (gh-9105).
+g.test_increased_error_serialization_verbosity = function()
+    local prevprev = box.error.new{reason = "prevprev"}
+    t.assert_equals(prevprev:unpack(), prevprev:__serialize())
+
+    local prev = box.error.new{reason = "prev"}
+    prev:set_prev(prevprev)
+    local cur = box.error.new{reason = "cur"}
+    cur:set_prev(prev)
+    local cur_unpacked = cur:unpack()
+    t.assert_equals(type(cur_unpacked.prev), 'cdata')
+    local cur_serialized = cur:__serialize()
+    t.assert_equals(type(cur_serialized.prev), 'table')
+
+    t.assert_equals(json.encode(cur), json.encode(cur_serialized))
+
+    local prevprev_unpacked = prevprev:unpack()
+    prevprev_unpacked.message = nil
+    prevprev_unpacked = json.encode(prevprev_unpacked)
+    t.assert_equals(tostring(prevprev),
+                    string.format("%s\t%s",
+                                  prevprev.message, prevprev_unpacked))
+
+    local prev_unpacked = prev:unpack()
+    prev_unpacked.message = nil
+    prev_unpacked.prev = nil
+    prev_unpacked = json.encode(prev_unpacked)
+    local cur_unpacked = cur:unpack()
+    cur_unpacked.message = nil
+    cur_unpacked.prev = nil
+    cur_unpacked = json.encode(cur_unpacked)
+    t.assert_equals(tostring(cur),
+                    string.format("%s\t%s\n" ..
+                                  "%s\t%s\n" ..
+                                  "%s\t%s",
+                                  prevprev.message, prevprev_unpacked,
+                                  prev.message, prev_unpacked,
+                                  cur.message, cur_unpacked))
+
+    compat.box_error_serialize_verbose = 'old'
+    t.assert_equals(cur:__serialize(), tostring(cur))
+    t.assert_equals(tostring(cur), cur.message)
+    t.assert_equals(json.encode(cur), json.encode(cur.message))
 end

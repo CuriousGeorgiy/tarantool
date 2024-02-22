@@ -265,15 +265,6 @@ local function encode_nil(buf)
     p[0] = 0xc0
 end
 
-local function encode_error(buf, err)
-    if msgpack.cfg.encode_error_as_ext then
-        local p = buf:alloc(builtin.tnt_mp_sizeof_error(err))
-        builtin.tnt_mp_encode_error(p, err)
-    else
-        encode_str(buf, err.message)
-    end
-end
-
 local function encode_r(buf, obj, level)
 ::restart::
     if type(obj) == "number" then
@@ -347,6 +338,25 @@ local function encode_r(buf, obj, level)
         end
     else
         error("can not encode Lua type: '"..type(obj).."'")
+    end
+end
+
+--
+-- Encode an error to MsgPack either as an extension, or using it's
+-- serialization metamethod, falling back to string serialization under
+-- backwards compatibility.
+-- @param buf encoding buffer
+-- @param err error object
+local function encode_error(buf, err)
+    if msgpack.cfg.encode_error_as_ext then
+        local p = buf:alloc(builtin.tnt_mp_sizeof_error(err))
+        builtin.tnt_mp_encode_error(p, err)
+    else
+        if tweaks.box_error_serialize_verbose then
+            encode_r(buf, err:__serialize(), 0)
+        else
+            encode_str(buf, err.message)
+        end
     end
 end
 

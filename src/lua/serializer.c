@@ -39,6 +39,7 @@
 #include "trigger.h"
 #include "lib/core/decimal.h" /* decimal_t */
 #include "lib/core/mp_extension_types.h"
+#include "lib/core/tweaks.h"
 #include "lua/error.h"
 
 #include "datetime.h"
@@ -46,6 +47,16 @@
 #include "diag.h"
 #include "lua/utils.h"
 #include "tt_static.h"
+
+/**
+ * Controls whether errors should be serialized with increased verbosity.
+ *
+ * Since the verbose error representation contains the diagnostic trace, it is
+ * unsuitable for diff tests, and we disable this behaviour for them from the
+ * CLI. We enable it by default, so that the compat action does not interfere.
+ */
+bool box_error_serialize_verbose = true;
+TWEAK_BOOL(box_error_serialize_verbose);
 
 int luaL_map_metatable_ref = LUA_REFNIL;
 int luaL_array_metatable_ref = LUA_REFNIL;
@@ -559,7 +570,43 @@ luaL_tofield(struct lua_State *L, struct luaL_serializer *cfg, int index,
 			} else if (ctypeid == CTID_UUID) {
 				field->ext_type = MP_UUID;
 				field->uuidval = (struct tt_uuid *) cdata;
-			} else if (ctypeid == CTID_CONST_STRUCT_ERROR_REF) {
+			} else if (ctypeid == CTID_CONST_STRUCT_ERROR_REF &&
+				   (!cfg->encode_error_as_ext ||
+				    !box_error_serialize_verbose)) {
+				/*
+				 * This attribute is used in 2 different ways:
+				 * 1. in the JSON and YAML serializer libraries,
+				 * the `cfg->encode_error_as_ext` option is
+				 * never used and the error object's message is
+				 * always dumped;
+				 * 2. in the MsgPack serializer library, we
+				 * either encode the error as an extension
+				 * (`cfg->encode_error_as_ext`), or we encode
+				 * the error using its serialization metamethod,
+				 * which returns a table.
+				 *
+				 * If we fallback to the old serialization
+				 * verbosity, i.e.,
+				 * `box_error_serialize_verbose` is false, we
+				 * always take this branch and the control flow
+				 * and behaviour are the same as before:
+				 * 1. we always dump the error object's message;
+				 * 2. we encode the error object either as a
+				 * extension or as a string.
+				 *
+				 * If we use the increased serialization
+				 * verbosity, i.e.,
+				 * `box_error_serialize_verbose` is true, the
+				 * control flow and behaviour are the following:
+				 * 1. we never take this branch and always use
+				 * the error object's serialization metamethod;
+				 * 2. we either don't take this branch if the
+				 * error needs to be encoded as an extension
+				 * (this way, we eventually fallback to
+				 * `luamp_encode_extension`), or we take this
+				 * branch and convert the error using its
+				 * serialization metamethod.
+				 */
 				field->ext_type = MP_ERROR;
 				field->errorval = *(struct error **)cdata;
 			} else if (ctypeid == CTID_DATETIME) {

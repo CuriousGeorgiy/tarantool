@@ -1,6 +1,11 @@
 -- error.lua (internal file)
 
+-- In diff tests, we update the tweak variable responsible for the
+-- `box_error_serialize` compat option externally, so we need to rely on the
+-- tweak value rather than the compat option.
+local tweaks = require('internal.tweaks')
 local ffi = require('ffi')
+local json = require('json')
 local msgpack = require('msgpack')
 
 local mp_decode = msgpack.decode_unchecked
@@ -160,9 +165,23 @@ local function error_match(err, ...)
     return string.match(error_message(err), ...)
 end
 
+--
+-- Serialize an error (including the whole error stack) to its table
+-- representation.
+-- @param err error object
+-- @return error converted to table representation
 local function error_serialize(err)
-    -- Return an error message only in admin console to keep compatibility
-    return error_message(err)
+    if tweaks.box_error_serialize_verbose then
+        local res = error_unpack(err)
+        local cur = res
+        while cur.prev ~= nil do
+            cur.prev = error_unpack(cur.prev)
+            cur = cur.prev
+        end
+        return res
+    else
+        return error_message(err)
+    end
 end
 
 local error_methods = {
@@ -203,9 +222,46 @@ local function error_concat(lhs, rhs)
     end
 end
 
+--
+-- Convert error to its string representation without accounting for the
+-- error's cause.
+-- @param err error object
+-- @return error's string representation
+local function error_to_string_wo_prev(err)
+    local err_unpacked = error_unpack(err)
+    err_unpacked.message = nil
+    err_unpacked.prev = nil
+    return string.format('%s\t%s', err.message, json.encode(err_unpacked))
+end
+
+--
+-- Convert an error to its string representation accounting for the whole error
+-- stack.
+-- @param err error object
+-- @return error's string representation
+local function error_to_string(err)
+    if not tweaks.box_error_serialize_verbose then
+        return error_message(err)
+    end
+
+    local cur = err
+    local error_stack = {}
+    while cur.prev ~= nil do
+        table.insert(error_stack, error_to_string_wo_prev(cur.prev))
+        cur = cur.prev
+    end
+
+    local res = ''
+    for i = #error_stack, 1, -1 do
+        res = res .. error_stack[i] .. '\n'
+    end
+
+    return res .. error_to_string_wo_prev(err)
+end
+
 local error_mt = {
     __index = error_index;
-    __tostring = error_message;
+    __tostring = error_to_string;
     __concat = error_concat;
 };
 

@@ -2351,6 +2351,12 @@ return schema.new('instance_config', schema.record({
         }, {
             default = 'new',
         }),
+        box_error_serialize_verbose = schema.enum({
+            'old',
+            'new',
+        }, {
+            default = 'new',
+        }),
     }),
 }, {
     -- This kind of validation cannot be implemented as the

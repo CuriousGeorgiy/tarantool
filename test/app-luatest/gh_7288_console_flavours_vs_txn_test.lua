@@ -127,14 +127,13 @@ end)
 
 g.test_remote_bin_no_streams_works = function(g)
     g.server:exec(function()
+        local yaml = require('yaml')
+
         local console = _G.console
         -- first check we have backcompat mode without streams
-        local expected = [[
----
-- error: Transaction is active at return from function
-...
-]]
-        t.assert_equals(console:send('box.begin()'), expected)
+        local expected = 'Transaction is active at return from function'
+        local err = yaml.decode(console:send('box.begin()'))
+        t.assert_equals(err[1].error.message, expected)
         local expected = [[
 ---
 - 4

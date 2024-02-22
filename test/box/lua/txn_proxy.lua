@@ -23,7 +23,18 @@ local mt = {
     __call = function(self, code_str)
         self.c1:put(code_str)
         local res = yaml.decode(self.c2:get())
-        return type(res) == 'table' and setmetatable(res, array_mt) or res
+        if type(res) ~= 'table' then
+            return res
+        end
+
+        if type(res[1]) == 'table' and
+            (type(res[1].error) == 'table' or type(res[1].error) == 'cdata')
+        then
+            -- We assume that the error is a `box.error` object.
+            res[1].error = res[1].error.message
+        end
+
+        return setmetatable(res, array_mt)
     end,
     __index = {
         begin    = function(self) return self('box.begin()') end,

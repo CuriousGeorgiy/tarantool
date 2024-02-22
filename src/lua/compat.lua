@@ -111,6 +111,14 @@ used as an error indicator in the box C API.
 https://tarantool.io/compat/box_space_max
 ]]
 
+local BOX_ERROR_SERIALIZE_VERBOSE = [[
+Controls the verbosity of box.error's serialization. Before, only the error
+message was serialized, omitting all other potentially useful fields. Now, a
+more verbose representation is used.
+
+https://tarantool.io/compat/box_error_serialize_verbose
+]]
+
 -- Returns an action callback that toggles a tweak.
 local function tweak_action(tweak_name, old_tweak_value, new_tweak_value)
     return function(is_new)
@@ -210,6 +218,16 @@ local options = {
         brief = BOX_SPACE_MAX_BRIEF,
         action = tweak_action('BOX_SPACE_MAX', 2147483647, 2147483646)
     },
+    box_error_serialize_verbose = {
+        default = 'new',
+        obsolete = nil,
+        brief = BOX_ERROR_SERIALIZE_VERBOSE,
+        -- The option is enabled by default. We want to be able to disable it
+        -- using the tweaks mechanism for diff tests, and running the action
+        -- would interfere.
+        run_action_now = false,
+        action = tweak_action('box_error_serialize_verbose', false, true)
+    }
 }
 
 -- Array with option names in order of addition.
