@@ -1365,7 +1365,14 @@ end
 local function handle_eval_result(status, ...)
     if not status then
         rollback()
-        return box.error(E_PROC_LUA, (...))
+        local err = ...
+        if type(err) ~= 'cdata' then
+            box.error(E_PROC_LUA, err)
+        end
+        -- We assume the error is a `box.error` object.
+        err = err:unpack()
+        err.code = E_PROC_LUA
+        return box.error(err)
     end
     local results = {...}
     for i = 1, select('#', ...) do
