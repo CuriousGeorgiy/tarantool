@@ -1525,28 +1525,9 @@ applier_synchro_filter_tx(struct stailq *rows)
 	 * We do not nopify promotion/demotion and most of confirm/rollback.
 	 * Such syncrhonous requests should be filtered by txn_limbo to detect
 	 * possible split brain situations.
-	 *
-	 * This means the only filtered out transactions are synchronous ones or
-	 * the ones depending on them.
-	 *
-	 * Any asynchronous transaction from an obsolete term when limbo is
-	 * claimed by someone is a marker of split-brain by itself: consider it
-	 * a synchronous transaction, which is committed with quorum 1.
 	 */
 	struct applier_tx_row *item;
-	if (iproto_type_is_dml(row->type) && !row->wait_sync) {
-		if (txn_limbo.owner_id == REPLICA_ID_NIL)
-			return 0;
-		stailq_foreach_entry(item, rows, next) {
-			row = &item->row;
-			if (row->type == IPROTO_NOP)
-				continue;
-			diag_set(ClientError, ER_SPLIT_BRAIN,
-				 "got an async transaction from an old term");
-			return -1;
-		}
-		return 0;
-	} else if (iproto_type_is_synchro_request(row->type)) {
+	if (iproto_type_is_synchro_request(row->type)) {
 		item = stailq_last_entry(rows, typeof(*item), next);
 		struct synchro_request req = item->req.synchro;
 		/* Note! Might be different from row->replica_id. */

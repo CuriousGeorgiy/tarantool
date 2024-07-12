@@ -701,11 +701,6 @@ txn_limbo_ack(struct txn_limbo *limbo, uint32_t replica_id, int64_t lsn)
 		assert(e->ack_count <= VCLOCK_MAX);
 		if (e->lsn > lsn)
 			break;
-		/*
-		 * Sync transactions need to collect acks. Async
-		 * transactions are automatically committed right
-		 * after all the previous sync transactions are.
-		 */
 		if (!txn_needs_ack(e->txn)) {
 			continue;
 		} else if (e->lsn <= prev_lsn) {

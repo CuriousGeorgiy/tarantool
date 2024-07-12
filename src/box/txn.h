@@ -110,6 +110,11 @@ enum txn_flag {
 	 * Transaction has been rolled back so it cannot be continued.
 	 */
 	TXN_IS_ROLLED_BACK = 0x200,
+	/**
+	 * Asynchronous transaction has been acked to the user, but is waiting
+	 * in the limbo for a confirmation quorum.
+	 */
+	TXN_EARLY_ACK = 0x400,
 };
 
 enum {

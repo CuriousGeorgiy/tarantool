@@ -958,7 +958,9 @@ txn_journal_entry_new(struct txn *txn)
 			 * doesn't touch sync space (each sync txn
 			 * should be considered as a barrier).
 			 */
-			txn_set_flags(txn, TXN_WAIT_SYNC);
+			txn_set_flags(txn, TXN_WAIT_SYNC | TXN_EARLY_ACK);
+		} else {
+			txn_set_flags(txn, TXN_EARLY_ACK);
 		}
 	}
 
@@ -1166,6 +1168,14 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 			txn_limbo_ack(&txn_limbo, txn_limbo.owner_id,
 				      limbo_entry->lsn);
 		}
+		if (!txn_has_flag(txn, TXN_WAIT_SYNC)) {
+			txn->fiber = NULL;
+			return 0;
+		}
+		if (txn_has_flag(txn, TXN_EARLY_ACK)) {
+			limbo_entry = rlist_prev_entry(limbo_entry, in_queue);
+			assert(txn_has_flag(limbo_entry->txn, TXN_WAIT_SYNC));
+		}
 		int rc = txn_limbo_wait_complete(&txn_limbo, limbo_entry);
 		if (rc < 0) {
 			if (fiber_is_cancelled()) {
@@ -1174,6 +1184,11 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 			} else {
 				goto rollback;
 			}
+		}
+		if (txn_has_flag(txn, TXN_EARLY_ACK)) {
+			txn_clear_flags(txn, TXN_WAIT_SYNC);
+			txn->fiber = NULL;
+			return 0;
 		}
 	}
 finish_done:
