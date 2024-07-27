@@ -57,6 +57,7 @@
 #include "wal.h"		/* wal_collect_garbage() */
 #include "checkpoint_schedule.h"
 #include "txn_limbo.h"
+#include "replication.h"
 
 struct gc_state gc;
 
@@ -522,6 +523,11 @@ gc_do_checkpoint(bool is_scheduled)
 	 * Wait the confirms on all "sync" transactions before
 	 * create a snapshot.
 	 */
+	if (!txn_limbo_is_empty(&txn_limbo)) {
+		say_info("Checkpoint will be created as soon as "
+			 "all existing synchronous transactions "
+			 "are committed");
+	}
 	rc = txn_limbo_wait_confirm(&txn_limbo);
 	if (rc != 0)
 		goto out;
