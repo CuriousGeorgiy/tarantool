@@ -160,6 +160,8 @@ txn_limbo_on_remove(struct txn_limbo *limbo,
 	assert(limbo->size >= 0);
 	limbo->len--;
 	assert(limbo->len >= 0);
+	/* Wake up all fiber waiting to add a new limbo entry. */
+	fiber_cond_broadcast(&limbo->wait_cond);
 }
 
 struct txn_limbo_entry *
