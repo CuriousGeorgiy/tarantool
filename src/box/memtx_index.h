@@ -11,6 +11,32 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+/**
+ * A logical entry in a memtx index.
+ *
+ * A tuple identifies an entry in a regular index. A multikey or functional
+ * index may contain several entries for the same tuple, so the hint is part of
+ * the entry identity there. The hint is meaningful only together with the
+ * index whose operation produced the entry.
+ */
+struct memtx_index_entry {
+	/** Tuple stored in the index, or NULL for an absent entry. */
+	struct tuple *tuple;
+	/**
+	 * Index-specific entry discriminator. It is the multikey array position
+	 * for a multikey index and a referenced functional-key tuple for a
+	 * functional index. Regular entries crossing the generic memtx-index
+	 * API must keep HINT_NONE; index implementations that need comparison
+	 * hints compute them locally.
+	 */
+	hint_t hint;
+};
+
+static const struct memtx_index_entry memtx_index_entry_null = {
+	.tuple = NULL,
+	.hint = HINT_NONE,
+};
+
 /** Virtual function table for memtx-specific index operations. */
 struct memtx_index_vtab {
 	/** Base index virtual table for common index operations. */
@@ -28,9 +54,11 @@ struct memtx_index_vtab {
 	 * NB: do not use the same object for @a result and @a successor - they
 	 *     are different returned values and implementation can rely on it.
 	 */
-	int (*replace)(struct index *index, struct tuple *old_tuple,
-		       struct tuple *new_tuple, enum dup_replace_mode mode,
-		       struct tuple **result, struct tuple **successor);
+	int (*replace)(struct index *index, struct memtx_index_entry old_entry,
+		       struct memtx_index_entry new_entry,
+		       enum dup_replace_mode mode,
+		       struct memtx_index_entry *result,
+		       struct memtx_index_entry *successor);
 	/**
 	 * Two-phase index creation: begin building, add tuples, finish.
 	 */
@@ -47,15 +75,11 @@ struct memtx_index_vtab {
 	void (*end_build)(struct index *index);
 };
 
-static inline int
+/** Wrapper around `memtx_index_vtab::replace`. */
+int
 memtx_index_replace(struct index *index, struct tuple *old_tuple,
 		    struct tuple *new_tuple, enum dup_replace_mode mode,
-		    struct tuple **result, struct tuple **successor)
-{
-	struct memtx_index_vtab *vtab = (struct memtx_index_vtab *)index->vtab;
-	return vtab->replace(index, old_tuple, new_tuple, mode, result,
-			     successor);
-}
+		    struct tuple **result, struct tuple **successor);
 
 static inline void
 memtx_index_begin_build(struct index *index)
