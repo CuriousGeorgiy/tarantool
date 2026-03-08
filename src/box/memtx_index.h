@@ -75,11 +75,55 @@ struct memtx_index_vtab {
 	void (*end_build)(struct index *index);
 };
 
-/** Wrapper around `memtx_index_vtab::replace`. */
+/**
+ * Replace tuple entries and return the full positional result.
+ *
+ * This form is for MVCC callers that need every replaced, successor, and
+ * inserted entry to build or roll back entry history. It initializes all three
+ * lists, but allocates their records on the fiber region; the caller must keep
+ * an encompassing region savepoint and truncate it after consuming the result.
+ */
 int
+memtx_index_replace_with_results(struct index *index, struct tuple *old_tuple,
+				 struct tuple *new_tuple,
+				 enum dup_replace_mode mode,
+				 struct tuple **result,
+				 struct tuple **successor);
+
+/**
+ * Replace tuple entries and return one replaced tuple.
+ *
+ * This form is only for callers operating on an index that yields at most one
+ * logical replace result. It discards successor and inserted-entry details and
+ * releases any temporary result storage before returning.
+ */
+static inline int
+memtx_index_replace_with_single_result(struct index *index,
+				       struct tuple *old_tuple,
+				       struct tuple *new_tuple,
+				       enum dup_replace_mode mode,
+				       struct tuple **result)
+{
+	struct tuple *unused;
+	return memtx_index_replace_with_results(index, old_tuple, new_tuple,
+						mode, result, &unused);
+}
+
+/**
+ * Replace tuple entries and discard all result details.
+ *
+ * This form is for callers that only need the physical index change and its
+ * success status, such as index build and rollback paths. It cleans up
+ * functional-key results and temporary region storage before returning.
+ */
+static inline int
 memtx_index_replace(struct index *index, struct tuple *old_tuple,
-		    struct tuple *new_tuple, enum dup_replace_mode mode,
-		    struct tuple **result, struct tuple **successor);
+		    struct tuple *new_tuple, enum dup_replace_mode mode)
+{
+	struct tuple *unused;
+	return memtx_index_replace_with_results(index, old_tuple, new_tuple,
+						mode, &unused, &unused);
+}
 
 static inline void
 memtx_index_begin_build(struct index *index)
