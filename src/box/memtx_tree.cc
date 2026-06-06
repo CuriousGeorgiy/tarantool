@@ -2438,6 +2438,7 @@ static const struct index_vtab memtx_tree_disabled_index_vtab_base = {
 static const struct memtx_index_vtab memtx_tree_disabled_index_vtab = {
 	/* .base = */ memtx_tree_disabled_index_vtab_base,
 	/* .replace = */ memtx_tree_disabled_index_replace,
+	/* .replace_entry = */ memtx_tree_disabled_index_replace,
 	/* .begin_build = */ generic_memtx_index_begin_build,
 	/* .reserve = */ generic_memtx_index_reserve,
 	/* .build_next = */ memtx_tree_disabled_index_build_next,
@@ -2509,6 +2510,7 @@ get_memtx_tree_index_vtab(void)
 		/* .replace = */ is_mk || is_func ?
 				 memtx_tree_index_replace_multikey :
 				 memtx_tree_index_replace<USE_HINT>,
+		/* .replace_entry = */ memtx_tree_index_replace<USE_HINT>,
 		/* .begin_build = */ memtx_tree_index_begin_build<USE_HINT>,
 		/* .reserve = */ memtx_tree_index_reserve<USE_HINT>,
 		/* .build_next = */ is_mk ? memtx_tree_index_build_next_multikey :

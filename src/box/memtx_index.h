@@ -37,6 +37,23 @@ static const struct memtx_index_entry memtx_index_entry_null = {
 	.hint = HINT_NONE,
 };
 
+/**
+ * Positional result stream of an index replace.
+ *
+ * Every logical replace step appends one record to each list. Missing values,
+ * including values of delete-only and excluded-key steps, are represented by a
+ * record containing memtx_index_entry_null. Records are allocated on the fiber
+ * region and remain valid until the owning caller truncates it.
+ */
+struct memtx_index_replace_result_set {
+	/** Entry removed or replaced by each logical step. */
+	struct rlist replaced;
+	/** Entry following the inserted entry for each logical step. */
+	struct rlist successors;
+	/** Entry inserted by each logical step. */
+	struct rlist inserted;
+};
+
 /** Virtual function table for memtx-specific index operations. */
 struct memtx_index_vtab {
 	/** Base index virtual table for common index operations. */
@@ -59,6 +76,17 @@ struct memtx_index_vtab {
 		       enum dup_replace_mode mode,
 		       struct memtx_index_entry *result,
 		       struct memtx_index_entry *successor);
+	/**
+	 * Replace one physical index entry. Unlike @a replace, the old and new
+	 * entries are already fully resolved for multikey or functional
+	 * indexes, and @a successor is filled only by ordered implementations.
+	 */
+	int (*replace_entry)(struct index *index,
+			     struct memtx_index_entry old_entry,
+			     struct memtx_index_entry new_entry,
+			     enum dup_replace_mode mode,
+			     struct memtx_index_entry *result,
+			     struct memtx_index_entry *successor);
 	/**
 	 * Two-phase index creation: begin building, add tuples, finish.
 	 */
@@ -87,8 +115,19 @@ int
 memtx_index_replace_with_results(struct index *index, struct tuple *old_tuple,
 				 struct tuple *new_tuple,
 				 enum dup_replace_mode mode,
-				 struct tuple **result,
-				 struct tuple **successor);
+				 struct memtx_index_replace_result_set *result);
+
+/**
+ * Return the single replaced tuple from a non-multikey replace-result set.
+ */
+struct tuple *
+memtx_index_replace_result_list_to_tuple(struct index *index,
+					 struct rlist *result_list);
+
+/** Release resources retained by a successful replace-result set. */
+void
+memtx_index_replace_result_set_cleanup(
+	struct index *index, struct memtx_index_replace_result_set *result);
 
 /**
  * Replace tuple entries and return one replaced tuple.
@@ -97,17 +136,12 @@ memtx_index_replace_with_results(struct index *index, struct tuple *old_tuple,
  * logical replace result. It discards successor and inserted-entry details and
  * releases any temporary result storage before returning.
  */
-static inline int
+int
 memtx_index_replace_with_single_result(struct index *index,
 				       struct tuple *old_tuple,
 				       struct tuple *new_tuple,
 				       enum dup_replace_mode mode,
-				       struct tuple **result)
-{
-	struct tuple *unused;
-	return memtx_index_replace_with_results(index, old_tuple, new_tuple,
-						mode, result, &unused);
-}
+				       struct tuple **result);
 
 /**
  * Replace tuple entries and discard all result details.
@@ -121,9 +155,14 @@ memtx_index_replace(struct index *index, struct tuple *old_tuple,
 		    struct tuple *new_tuple, enum dup_replace_mode mode)
 {
 	struct tuple *unused;
-	return memtx_index_replace_with_results(index, old_tuple, new_tuple,
-						mode, &unused, &unused);
+	return memtx_index_replace_with_single_result(index, old_tuple,
+						      new_tuple, mode, &unused);
 }
+
+/** Rollback every complete step of a replace-result set. */
+void
+memtx_index_replace_rollback(struct index *index,
+			     struct memtx_index_replace_result_set *result);
 
 static inline void
 memtx_index_begin_build(struct index *index)
