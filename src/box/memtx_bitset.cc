@@ -165,6 +165,22 @@ value_to_tuple(size_t value)
 }
 #endif /* #ifndef OLD_GOOD_BITSET */
 
+/** Find the exact tuple registered in the bitset index. */
+static bool
+memtx_bitset_index_find_tuple(struct memtx_bitset_index *index,
+			      struct tuple *tuple, size_t *value)
+{
+#ifndef OLD_GOOD_BITSET
+	uint32_t pos = mh_bitset_index_find(index->tuple_to_id, tuple, 0);
+	if (pos == mh_end(index->tuple_to_id))
+		return false;
+	*value = mh_bitset_index_node(index->tuple_to_id, pos)->id;
+#else /* #ifndef OLD_GOOD_BITSET */
+	*value = tuple_to_value(tuple);
+#endif /* #ifndef OLD_GOOD_BITSET */
+	return tt_bitset_index_contains_value(&index->index, *value);
+}
+
 struct bitset_index_iterator {
 	struct iterator base; /* Must be the first member. */
 	struct tt_bitset_iterator bitset_it;
@@ -280,10 +296,19 @@ make_key(const char *field, uint32_t *key_len)
 	}
 }
 
+/**
+ * Replace an old tuple with a new tuple in the index.
+ *
+ * BITSET values use numeric IDs that may be retained by concurrent iterators.
+ * Replacing a tuple must reuse the old ID atomically so that an iterator never
+ * resolves a retained ID through a free-list slot.
+ */
 static int
 memtx_bitset_index_replace(struct index *base, struct tuple *old_tuple,
-			   struct tuple *new_tuple, enum dup_replace_mode mode,
-			   struct tuple **result, struct tuple **successor)
+			   struct tuple *new_tuple,
+			   enum dup_replace_mode mode,
+			   struct tuple **result,
+			   struct tuple **successor)
 {
 	struct memtx_bitset_index *index = (struct memtx_bitset_index *)base;
 
@@ -292,21 +317,15 @@ memtx_bitset_index_replace(struct index *base, struct tuple *old_tuple,
 
 	assert(!base->def->opts.is_unique);
 	assert(!base->def->key_def->is_multikey);
-	assert(old_tuple != NULL || new_tuple != NULL);
+	assert(new_tuple != NULL);
 	(void) mode;
 
 	*result = NULL;
 
 	if (old_tuple != NULL) {
-#ifndef OLD_GOOD_BITSET
-		uint32_t value = memtx_bitset_index_tuple_to_value(index, old_tuple);
-#else /* #ifndef OLD_GOOD_BITSET */
-		size_t value = tuple_to_value(old_tuple);
-#endif /* #ifndef OLD_GOOD_BITSET */
-		if (tt_bitset_index_contains_value(&index->index,
-						   (size_t) value)) {
+		size_t value;
+		if (memtx_bitset_index_find_tuple(index, old_tuple, &value)) {
 			*result = old_tuple;
-
 			assert(old_tuple != new_tuple);
 			tt_bitset_index_remove_value(&index->index, value);
 #ifndef OLD_GOOD_BITSET
@@ -315,34 +334,51 @@ memtx_bitset_index_replace(struct index *base, struct tuple *old_tuple,
 		}
 	}
 
-	if (new_tuple != NULL) {
-		const char *field = tuple_field_by_part(new_tuple,
-				base->def->key_def->parts, MULTIKEY_NONE);
-		uint32_t key_len;
-		const void *key = make_key(field, &key_len);
+	const char *field = tuple_field_by_part(new_tuple,
+						base->def->key_def->parts,
+						MULTIKEY_NONE);
+	uint32_t key_len;
+	const void *key = make_key(field, &key_len);
 #ifndef OLD_GOOD_BITSET
-		if (memtx_bitset_index_register_tuple(index, new_tuple) != 0) {
-			/*
-			 * We can't fail to allocate a new tuple pointer if we
-			 * have just deregistered the old one - it will be moved
-			 * to the spare list and reused.
-			 */
-			assert(*result == NULL);
-			return -1;
-		}
-		uint32_t value = memtx_bitset_index_tuple_to_value(index, new_tuple);
-#else /* #ifndef OLD_GOOD_BITSET */
-		uint32_t value = tuple_to_value(new_tuple);
-#endif /* #ifndef OLD_GOOD_BITSET */
-		if (tt_bitset_index_insert(&index->index, key, key_len,
-					   value) < 0) {
-#ifndef OLD_GOOD_BITSET
-			memtx_bitset_index_unregister_tuple(index, new_tuple);
-#endif /* #ifndef OLD_GOOD_BITSET */
-			diag_set(OutOfMemory, 0, "memtx_bitset_index", "insert");
-			return -1;
-		}
+	if (memtx_bitset_index_register_tuple(index, new_tuple) != 0) {
+		/*
+		 * If the old tuple was removed, its ID is first on the spare
+		 * list and registration cannot fail.
+		 */
+		assert(*result == NULL);
+		return -1;
 	}
+	uint32_t value = memtx_bitset_index_tuple_to_value(index, new_tuple);
+#else /* #ifndef OLD_GOOD_BITSET */
+	uint32_t value = tuple_to_value(new_tuple);
+#endif /* #ifndef OLD_GOOD_BITSET */
+	if (tt_bitset_index_insert(&index->index, key, key_len, value) < 0) {
+#ifndef OLD_GOOD_BITSET
+		memtx_bitset_index_unregister_tuple(index, new_tuple);
+#endif /* #ifndef OLD_GOOD_BITSET */
+		diag_set(OutOfMemory, 0, "memtx_bitset_index", "insert");
+		return -1;
+	}
+	return 0;
+}
+
+/** Delete one exact tuple from the index. */
+static int
+memtx_bitset_index_delete(struct index *base, struct tuple *tuple,
+			  struct tuple **result)
+{
+	struct memtx_bitset_index *index = (struct memtx_bitset_index *)base;
+	*result = NULL;
+	if (tuple == NULL)
+		return 0;
+	size_t value;
+	if (!memtx_bitset_index_find_tuple(index, tuple, &value))
+		return 0;
+	tt_bitset_index_remove_value(&index->index, value);
+#ifndef OLD_GOOD_BITSET
+	memtx_bitset_index_unregister_tuple(index, tuple);
+#endif /* #ifndef OLD_GOOD_BITSET */
+	*result = tuple;
 	return 0;
 }
 
@@ -530,7 +566,8 @@ static const struct index_vtab memtx_bitset_index_vtab_base = {
 
 static const struct memtx_index_vtab memtx_bitset_index_vtab = {
 	/* .base = */ memtx_bitset_index_vtab_base,
-	/* .replace = */ memtx_bitset_index_replace,
+	/* .replace_tuple = */ memtx_bitset_index_replace,
+	/* .delete_tuple = */ memtx_bitset_index_delete,
 	/* .begin_build = */ generic_memtx_index_begin_build,
 	/* .reserve = */ generic_memtx_index_reserve,
 	/* .build_next = */ generic_memtx_index_build_next,
