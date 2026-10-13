@@ -327,7 +327,13 @@ struct count_gap_item {
 	enum iterator_type type;
 	/** Storage for short key. @key may point here. */
 	char short_key[16];
-	/** The bound tuple. */
+	/**
+	 * The bound tuple. Referenced: the counting transaction reads the
+	 * visible version of the bound, not the bound itself, which may be an
+	 * invisible replacement of the tuple by another transaction, so the
+	 * story of the bound may be garbage collected while the tracker is
+	 * alive, e.g. once that transaction is rolled back.
+	 */
 	struct tuple *until;
 	/** The bound tuple hint. */
 	hint_t until_hint;
@@ -3529,9 +3535,14 @@ memtx_tx_delete_gap(struct gap_item_base *item)
 	case GAP_NEARBY:
 		pool = &txm.nearby_gap_item_mempoool;
 		break;
-	case GAP_COUNT:
+	case GAP_COUNT: {
 		pool = &txm.count_gap_item_mempool;
+		struct count_gap_item *count_item =
+			(struct count_gap_item *)item;
+		if (count_item->until != NULL)
+			tuple_unref(count_item->until);
 		break;
+	}
 	case GAP_FULL_SCAN:
 		pool = &txm.full_scan_gap_item_mempool;
 		break;
@@ -3998,6 +4009,8 @@ memtx_tx_count_gap_item_new(struct txn *txn, enum iterator_type type,
 				      sizeof(item->short_key), &item->key_len);
 	item->until = until;
 	item->until_hint = until_hint;
+	if (until != NULL)
+		tuple_ref(until);
 
 	return item;
 }
