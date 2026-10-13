@@ -133,6 +133,11 @@ memtx_tree_data_is_equal(const struct memtx_tree_data_common *a,
  * tuple, and after a tree modification the iterator must not take one of
  * them for another. Regular indexes have one element per tuple, so their
  * hints are equal whenever the tuples are.
+ *
+ * memtx_tree_data_is_equal() itself must not compare hints: it is the
+ * identity check of the tree deletion by value, and a functional index
+ * deletes the entries of a tuple by freshly built keys, whose hints differ
+ * from the ones in the tree.
  */
 template<bool USE_HINT>
 static bool
