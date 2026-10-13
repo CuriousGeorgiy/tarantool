@@ -328,11 +328,10 @@ struct count_gap_item {
 	/** Storage for short key. @key may point here. */
 	char short_key[16];
 	/**
-	 * The bound tuple. Referenced: the counting transaction reads the
-	 * visible version of the bound, not the bound itself, which may be an
-	 * invisible replacement of the tuple by another transaction, so the
-	 * story of the bound may be garbage collected while the tracker is
-	 * alive, e.g. once that transaction is rolled back.
+	 * The bound tuple. Referenced, because the counting transaction does
+	 * not necessarily read it: the bound may be an uncommitted tuple of
+	 * another transaction, and its story may be garbage collected while
+	 * the tracker is alive, e.g. after that transaction is rolled back.
 	 */
 	struct tuple *until;
 	/** The bound tuple hint. */
