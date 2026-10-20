@@ -732,6 +732,41 @@ g.test_snapshot_and_recovery = function(cg)
     end)
 end
 
+-- Check the sort data stores the multikey positions of the cleaned tuples.
+g.test_snapshot_and_recovery_sort_data = function(cg)
+    t.skip_if(cg.params.index_opts.func ~= nil,
+              'functional indexes have no sort data')
+    local stream = cg.server.net_box:new_stream()
+
+    cg.server:exec(function()
+        box.space.s:replace{0, {10, 20}}
+        box.space.s:replace{1, {30}}
+    end)
+
+    stream:begin()
+    stream.space.s:replace{0, {20, 10}}
+    stream.space.s:replace{1, {5, 30}}
+
+    cg.server:exec(function()
+        box.cfg{memtx_use_sort_data = true}
+        box.snapshot()
+    end)
+
+    stream:rollback()
+
+    cg.server:restart({box_cfg = {memtx_use_mvcc_engine = true,
+                                  memtx_use_sort_data = true}})
+
+    cg.server:exec(function()
+        local mk = box.space.s.index.mk
+        t.assert_equals(mk:get{10}, {0, {10, 20}})
+        t.assert_equals(mk:get{20}, {0, {10, 20}})
+        t.assert_equals(mk:get{30}, {1, {30}})
+        t.assert_equals(mk:select{},
+                        {{0, {10, 20}}, {0, {10, 20}}, {1, {30}}})
+    end)
+end
+
 -- Check read views over multikey index see each index entry separately.
 g.test_read_view = function(cg)
     local stream = cg.server.net_box:new_stream()

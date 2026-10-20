@@ -2557,7 +2557,7 @@ memtx_prepare_read_view_tuple(struct memtx_index_entry entry,
 			      struct memtx_tx_snapshot_cleaner *cleaner,
 			      struct read_view_tuple *result)
 {
-	struct tuple *tuple = memtx_tx_snapshot_clarify(cleaner, entry);
+	struct tuple *tuple = memtx_tx_snapshot_clarify(cleaner, entry).tuple;
 	if (tuple == NULL) {
 		*result = read_view_tuple_none();
 		return 0;

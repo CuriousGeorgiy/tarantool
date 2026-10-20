@@ -4719,8 +4719,11 @@ struct memtx_tx_snapshot_cleaner_entry
 	 * one tuple, each one is cleaned separately.
 	 */
 	struct memtx_index_entry from;
-	/* Cleaned version of the tuple. */
-	struct tuple *to;
+	/*
+	 * Cleaned version of the entry. Its key data is the multikey position
+	 * in the cleaned tuple, functional keys are not kept.
+	 */
+	struct memtx_index_entry to;
 	/* The tuples share the same key, so one hint is enough. */
 	hint_t hint;
 	/*
@@ -4765,12 +4768,21 @@ memtx_tx_snapshot_cleaner_add(struct mh_snapshot_cleaner_t *ht,
 		memtx_tx_story_link_clarify_impl(NULL, space, link, true);
 	if (clean == tuple)
 		return;
+	struct memtx_index_entry to = memtx_index_entry_null;
+	to.tuple = clean;
+	if (clean != NULL && index->def->key_def->is_multikey) {
+		/* The positions of a key differ between the tuples. */
+		struct memtx_story_link *visible = link;
+		while (visible->story->tuple != clean)
+			visible = visible->older_link;
+		to.key_data = visible->key_data;
+	}
 	struct memtx_tx_snapshot_cleaner_entry entry = {
 		.from = {
 			.tuple = tuple,
 			.key_data = key_data,
 		},
-		.to = clean,
+		.to = to,
 		.hint = memtx_tx_story_link_hint(link, index,
 						 index->def->cmp_def),
 		.is_duplicate = is_duplicate,
@@ -4855,7 +4867,8 @@ memtx_tx_snapshot_cleaner_create(struct memtx_tx_snapshot_cleaner *cleaner,
 			struct memtx_tx_snapshot_cleaner_entry entry;
 			entry.from.tuple = alter_stmt->new_tuple;
 			entry.from.key_data = HINT_NONE;
-			entry.to = alter_stmt->old_tuple;
+			entry.to.tuple = alter_stmt->old_tuple;
+			entry.to.key_data = HINT_NONE;
 			/* Hint is not used if MVCC is off. */
 			entry.hint = HINT_NONE;
 			entry.is_duplicate = false;
@@ -4865,7 +4878,7 @@ memtx_tx_snapshot_cleaner_create(struct memtx_tx_snapshot_cleaner *cleaner,
 	cleaner->ht = ht;
 }
 
-struct tuple *
+struct memtx_index_entry
 memtx_tx_snapshot_clarify_slow(struct memtx_tx_snapshot_cleaner *cleaner,
 			       struct memtx_index_entry entry)
 {
@@ -4879,15 +4892,16 @@ memtx_tx_snapshot_clarify_slow(struct memtx_tx_snapshot_cleaner *cleaner,
 	 * tuple without key data, while the read view looks up an index
 	 * entry.
 	 */
+	struct memtx_index_entry key = entry;
 	if (!memtx_tx_manager_use_mvcc_engine)
-		entry.key_data = HINT_NONE;
-	mh_int_t pos = mh_snapshot_cleaner_find(ht, &entry, cleaner->index);
+		key.key_data = HINT_NONE;
+	mh_int_t pos = mh_snapshot_cleaner_find(ht, &key, cleaner->index);
 	if (pos == mh_end(ht))
-		return entry.tuple;
+		return entry;
 	struct memtx_tx_snapshot_cleaner_entry *cleaner_entry =
 		mh_snapshot_cleaner_node(ht, pos);
 	assert(memtx_tx_snapshot_cleaner_entry_equal(&cleaner_entry->from,
-						     &entry, cleaner->index));
+						     &key, cleaner->index));
 	return cleaner_entry->to;
 }
 
@@ -4959,7 +4973,7 @@ memtx_tx_snapshot_invisible_count_matching_until_slow(
 			continue;
 
 		/* Count the invisible tuple. */
-		if (entry->to == NULL)
+		if (entry->to.tuple == NULL)
 			res++;
 	}
 	return res;

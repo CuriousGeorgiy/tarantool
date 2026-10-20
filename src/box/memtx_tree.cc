@@ -2748,14 +2748,19 @@ memtx_tree_index_read_view_dump_sort_data(
 		/* Only dump visible data. */
 		struct memtx_index_entry entry =
 				memtx_tree_index_entry(&rv->index->base, data);
-		struct tuple *clarified =
+		struct memtx_index_entry clarified =
 			memtx_tx_snapshot_clarify(&rv->cleaner, entry);
-		if (clarified == NULL)
+		if (clarified.tuple == NULL)
 			continue;
-		/* Dump clarified tuples with hints (optionally). */
-		buffer[dumped].tuple = clarified;
+		/*
+		 * Dump clarified tuples with hints (optionally). A multikey
+		 * hint is the position in the tuple, so it is cleaned too.
+		 */
+		buffer[dumped].tuple = clarified.tuple;
 		if (USE_HINT)
-			buffer[dumped].set_hint(data->hint);
+			buffer[dumped].set_hint(
+				base->def->key_def->is_multikey ?
+				clarified.key_data : data->hint);
 		dumped++;
 	}
 

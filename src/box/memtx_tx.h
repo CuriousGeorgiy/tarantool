@@ -590,23 +590,25 @@ memtx_tx_snapshot_cleaner_create(struct memtx_tx_snapshot_cleaner *cleaner,
 				 struct space *space, struct index *index);
 
 /** Helper of txm_snapshot_clafify. */
-struct tuple *
+struct memtx_index_entry
 memtx_tx_snapshot_clarify_slow(struct memtx_tx_snapshot_cleaner *cleaner,
 			       struct memtx_index_entry entry);
 
 /**
- * Like a common clarify that function returns proper tuple if original
- * tuple in index is dirty.
+ * Like a common clarify that function returns proper entry if original
+ * entry in index is dirty.
  * @param cleaner - pre-created snapshot cleaner.
  * @param entry - index entry to clean.
- * @return cleaned tuple, can be NULL.
+ * @return cleaned entry, its tuple can be NULL. The key data of a cleaned
+ *  entry is the multikey position in the cleaned tuple, it is HINT_NONE
+ *  for a functional index.
  */
-static inline struct tuple *
+static inline struct memtx_index_entry
 memtx_tx_snapshot_clarify(struct memtx_tx_snapshot_cleaner *cleaner,
 			  struct memtx_index_entry entry)
 {
 	if (cleaner->ht == NULL)
-		return entry.tuple;
+		return entry;
 	return memtx_tx_snapshot_clarify_slow(cleaner, entry);
 }
 
@@ -670,7 +672,7 @@ static inline bool
 memtx_tx_snapshot_entry_is_visible(struct memtx_tx_snapshot_cleaner *cleaner,
 				   struct memtx_index_entry entry)
 {
-	return memtx_tx_snapshot_clarify(cleaner, entry) != NULL;
+	return memtx_tx_snapshot_clarify(cleaner, entry).tuple != NULL;
 }
 
 #if defined(__cplusplus)
