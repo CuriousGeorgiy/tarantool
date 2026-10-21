@@ -36,9 +36,13 @@ memtx_index_delete_impl(struct index *index, struct memtx_index_entry entry,
 
 /**
  * Replace one exact physical entry with another one.
+ *
+ * @param old_tuple - the replaced tuple, the duplicates of the new entry are
+ *  checked against it. Its entry may be absent from the index.
+ * @param old_entry - the entry of @a old_tuple to delete, if any.
  */
 static int
-memtx_index_replace_entry_impl(struct index *index,
+memtx_index_replace_entry_impl(struct index *index, struct tuple *old_tuple,
 			       struct memtx_index_entry old_entry,
 			       struct memtx_index_entry new_entry,
 			       enum dup_replace_mode mode,
@@ -48,8 +52,8 @@ memtx_index_replace_entry_impl(struct index *index,
 	*result = memtx_index_entry_null;
 	*successor = memtx_index_entry_null;
 	if (new_entry.tuple != NULL) {
-		if (memtx_index_replace_impl(index, old_entry.tuple, new_entry,
-					     mode, result, successor) != 0)
+		if (memtx_index_replace_impl(index, old_tuple, new_entry, mode,
+					     result, successor) != 0)
 			return -1;
 		if (result->tuple != NULL)
 			return 0;
@@ -76,8 +80,9 @@ memtx_index_replace_entry(struct index *index,
 {
 	struct memtx_index_entry result_entry;
 	struct memtx_index_entry unused;
-	if (memtx_index_replace_entry_impl(index, old_entry, new_entry, mode,
-					   &result_entry, &unused) != 0)
+	if (memtx_index_replace_entry_impl(index, old_entry.tuple, old_entry,
+					   new_entry, mode, &result_entry,
+					   &unused) != 0)
 		return -1;
 	*result = result_entry.tuple;
 	if (index->def->key_def->for_func_index) {
@@ -389,8 +394,9 @@ memtx_index_replace_regular(struct index *index, struct tuple *old_tuple,
 	struct memtx_index_replace_result *result =
 		memtx_index_replace_result_new(results);
 	result->inserted = new_entry;
-	return memtx_index_replace_entry_impl(index, old_entry, new_entry,
-					      mode, &result->replaced,
+	return memtx_index_replace_entry_impl(index, old_tuple, old_entry,
+					      new_entry, mode,
+					      &result->replaced,
 					      &result->successor);
 }
 
