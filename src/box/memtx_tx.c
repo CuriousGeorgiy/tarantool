@@ -1307,6 +1307,30 @@ memtx_tx_story_add_index_links(struct memtx_story *story, struct index *index)
 }
 
 /**
+ * Make the @a link of a functional index @a entry hold the key stored in the
+ * index.
+ *
+ * A link created from the tuple rather than from an index entry (by story
+ * garbage collection, the snapshot cleaner or the linking of a deleted story)
+ * holds a key of its own, of the runtime format, which is freed as soon as it
+ * is dereferenced, unlike the index keys, which are freed lazily while read
+ * views exist. The index releases its key with a replaced entry, but the
+ * key is needed again to put the entry back on rollback or garbage
+ * collection, which must not allocate and thus must not fail: take it over
+ * here, before the entry becomes an older version in its chain.
+ */
+static void
+memtx_tx_story_link_take_index_func_key(struct memtx_story_link *link,
+					struct memtx_index_entry entry)
+{
+	if (!link->is_func || link->key_data == entry.key_data)
+		return;
+	tuple_ref((struct tuple *)entry.key_data);
+	tuple_unref((struct tuple *)link->key_data);
+	link->key_data = entry.key_data;
+}
+
+/**
  * Add story links for a newly inserted tuple from the corresponding index
  * replace results. Multikey result streams have one step per new multikey
  * position, including excluded positions; null inserted records keep positions
@@ -1346,7 +1370,15 @@ memtx_tx_story_add_insert_links(struct memtx_story *story, struct space *space,
 				if (result->inserted.tuple == NULL)
 					continue;
 				hint_t key_data = result->inserted.key_data;
-				memtx_tx_story_add_link(story, index, key_data);
+				struct memtx_story_link *link =
+					memtx_tx_story_add_link(story, index,
+								key_data);
+				/*
+				 * The link may have been created from the
+				 * tuple while a function of an index yielded.
+				 */
+				memtx_tx_story_link_take_index_func_key(
+					link, result->inserted);
 			}
 		}
 	}
@@ -1356,21 +1388,19 @@ memtx_tx_story_add_insert_links(struct memtx_story *story, struct space *space,
  * Create a new story and link it with the @a tuple.
  * There are two known scenarios of using this function:
  * * The story is created for a clean tuple that is in space (and thus in
- *   space indexes) now. In this case @a direct_inserts is NULL and links are
- *   created lazily from actual read/replaced entries or forced before full
- *   walks. Such a story is a top of degenerate chains that consist of this
- *   story only.
+ *   space indexes) now. Multikey and functional links are created lazily from
+ *   actual read/replaced entries or forced before full walks. Such a story is
+ *   a top of degenerate chains that consist of this story only.
  * * The story is created for a new tuple that is to be inserted into space.
- *   In this case @a direct_inserts contains the index entries produced by the
- *   insertion, so functional keys are reused instead of calculated again. Such
- *   a story will become the top of chains, and a special function
- *   memtx_tx_story_link_top must be called for that.
+ *   Its multikey and functional links are added from the index replace
+ *   results by memtx_tx_story_add_insert_links. Such a story will become the
+ *   top of chains, and a special function memtx_tx_story_link_top must be
+ *   called for that.
  * In any case this story is expected to be a top of chains, so materialized
  * links get in_index members set to appropriate values.
  */
 static struct memtx_story *
-memtx_tx_story_new(struct space *space, struct tuple *tuple,
-		   struct rlist *results)
+memtx_tx_story_new(struct space *space, struct tuple *tuple)
 {
 	txm.must_do_gc_steps += TX_MANAGER_GC_STEPS_SIZE;
 	assert(!tuple_has_flag(tuple, TUPLE_IS_DIRTY));
@@ -1413,8 +1443,6 @@ memtx_tx_story_new(struct space *space, struct tuple *tuple,
 			memtx_tx_story_link_create(&story->link[i].first,
 						   story, index, HINT_NONE);
 	}
-	if (results != NULL)
-		memtx_tx_story_add_insert_links(story, space, results);
 	return story;
 }
 
@@ -2623,30 +2651,6 @@ memtx_tx_history_add_stmt_prepare_result(struct tuple *old_tuple,
 }
 
 /**
- * Make the @a link of a replaced functional entry hold the key stored in the
- * index.
- *
- * A link created from the tuple rather than from an index entry (by story
- * garbage collection, the snapshot cleaner or the linking of a deleted story)
- * holds a key of its own, of the runtime format, which is freed as soon as it
- * is dereferenced, unlike the index keys, which are freed lazily while read
- * views exist. The index releases its key with the replaced entry, but the
- * key is needed again to put the entry back on rollback or garbage
- * collection, which must not allocate and thus must not fail: take it over
- * here, before the entry becomes an older version in its chain.
- */
-static void
-memtx_tx_story_link_take_index_func_key(struct memtx_story_link *link,
-					struct memtx_index_entry replaced)
-{
-	if (!link->is_func || link->key_data == replaced.key_data)
-		return;
-	tuple_ref((struct tuple *)replaced.key_data);
-	tuple_unref((struct tuple *)link->key_data);
-	link->key_data = replaced.key_data;
-}
-
-/**
  * Helper of @sa memtx_tx_history_add_stmt, does actual work in case when
  * new_tuple != NULL.
  * Just for understanding, that might be:
@@ -2654,9 +2658,8 @@ memtx_tx_story_link_take_index_func_key(struct memtx_story_link *link,
  * INSERT, and old_tuple is NULL because there's no such tuple.
  * UPDATE, and old_tuple is not NULL and is the updated tuple.
  *
- * This helper is the sole creator of the story for @a new_tuple. It runs after
- * all index replacements succeed and deletes the story if late conflict
- * resolution fails.
+ * The story of @a new_tuple is created before the index replacements, the
+ * caller deletes it if they or late conflict resolution fail.
  */
 static int
 memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
@@ -2669,15 +2672,14 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 	assert(new_tuple != NULL);
 	struct space *space = stmt->space;
 
-	/* Create and link add_story after all index replacements succeed. */
-	struct memtx_story *add_story =
-		memtx_tx_story_new(space, new_tuple, direct_results);
+	/* Link add_story. */
+	struct memtx_story *add_story = memtx_tx_story_get(new_tuple);
+	memtx_tx_story_add_insert_links(add_story, space, direct_results);
 	memtx_tx_story_link_added_by(add_story, stmt);
 
 	/* Check overwritten tuple. */
 	if (check_dup(stmt, direct_results, &old_tuple, mode) != 0) {
 		memtx_tx_story_unlink_added_by(add_story, stmt);
-		memtx_tx_story_delete(add_story);
 		return -1;
 	}
 
@@ -2691,7 +2693,7 @@ memtx_tx_history_add_insert_stmt(struct txn_stmt *stmt,
 	if (next_pk != NULL && tuple_has_flag(next_pk, TUPLE_IS_DIRTY)) {
 		next_pk_story = memtx_tx_story_get(next_pk);
 	} else if (next_pk != NULL) {
-		next_pk_story = memtx_tx_story_new(space, next_pk, NULL);
+		next_pk_story = memtx_tx_story_new(space, next_pk);
 	}
 
 	/* Collect conflicts or form chains. */
@@ -2907,6 +2909,12 @@ memtx_tx_add_stmt(struct space *space, struct tuple *old_tuple,
 	size_t region_svp = region_used(region);
 
 	/*
+	 * Create story to make `new_tuple` dirty during replace.
+	 */
+	if (use_mvcc)
+		memtx_tx_story_new(space, new_tuple);
+
+	/*
 	 * Update primary index.
 	 * Without MVCC, we need to delete `old_tuple`, if any, from the index,
 	 * and insert `new_tuple`, if any, respecting the conflict resolution
@@ -2983,6 +2991,11 @@ rollback:
 		memtx_index_replace_rollback(space->index[i - 1],
 					     &direct_results[i - 1]);
 	region_truncate(region, region_svp);
+	/*
+	 * Delete story created for `new_tuple`.
+	 */
+	if (use_mvcc)
+		memtx_tx_story_delete(memtx_tx_story_get(new_tuple));
 	return -1;
 }
 
@@ -4232,7 +4245,7 @@ memtx_tx_track_read(struct txn *txn, struct space *space, struct tuple *tuple)
 		memtx_tx_track_read_story(txn, space, story);
 	} else {
 		struct memtx_story *story =
-			memtx_tx_story_new(space, tuple, NULL);
+			memtx_tx_story_new(space, tuple);
 		struct tx_read_tracker *tracker;
 		tracker = tx_read_tracker_new(txn, story);
 		rlist_add(&story->reader_list, &tracker->in_reader_list);
@@ -4474,7 +4487,7 @@ memtx_tx_track_gap_slow(struct txn *txn, struct space *space, struct index *inde
 
 	if (successor.tuple != NULL) {
 		if (!tuple_has_flag(successor.tuple, TUPLE_IS_DIRTY))
-			memtx_tx_story_new(space, successor.tuple, NULL);
+			memtx_tx_story_new(space, successor.tuple);
 		struct memtx_story_link *link =
 			memtx_tx_story_link_get(index, successor);
 		assert(link->in_index != NULL);

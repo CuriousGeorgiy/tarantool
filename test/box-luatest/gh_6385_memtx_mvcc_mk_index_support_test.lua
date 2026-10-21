@@ -1518,6 +1518,57 @@ g_mvcc_off.test_read_view_with_alter_stmt = function(cg)
     end)
 end
 
+local g_func_yield = t.group('gh-6385-func-yield')
+
+g_func_yield.before_all(function(cg)
+    cg.server = server:new{
+        box_cfg = {memtx_use_mvcc_engine = true}
+    }
+    cg.server:start()
+end)
+
+g_func_yield.after_all(function(cg)
+    cg.server:drop()
+end)
+
+-- Check that a replace whose functional index function yields keeps the new
+-- tuple dirty for the transactions reading it meanwhile.
+g_func_yield.test_func_yields_on_replace = function(cg)
+    cg.server:exec(function()
+        local fiber = require('fiber')
+        rawset(_G, 'ch', fiber.channel())
+        box.schema.func.create('f', {
+            body = [[
+                function(tuple)
+                    if tuple[2] == 10 then
+                        rawget(_G, 'ch'):get()
+                    end
+                    return {tuple[2]}
+                end
+            ]],
+            is_deterministic = true,
+            is_sandboxed = false,
+        })
+        local s = box.schema.create_space('s')
+        s:create_index('pk')
+        s:create_index('f', {parts = {{1, 'unsigned'}}, func = 'f'})
+        local f = fiber.new(function()
+            box.begin()
+            s:replace{1, 10}
+            box.commit()
+        end)
+        f:set_joinable(true)
+        fiber.yield()
+        box.begin()
+        s:get{1}
+        _G.ch:put(true)
+        t.assert(f:join())
+        box.commit()
+        t.assert_equals(s:select{}, {{1, 10}})
+        t.assert_equals(s.index.f:select{}, {{1, 10}})
+    end)
+end
+
 -- With MVCC, the keys of an indexed tuple are rebuilt by the story garbage
 -- collector and the snapshot cleaner, which cannot fail.
 local g_func_failure = t.group('gh-6385-func-failure-panic')
