@@ -75,3 +75,60 @@ g.test_manual_rollback = function(cg)
         t.assert_equals(space.index.sk:select{}, select_result)
     end, {cg.params.engine})
 end
+
+-- A delete skipped by the background index build is rolled back after the
+-- build has passed its key, so the index being built misses the tuple. A
+-- delete of the tuple from the built range must not fail then.
+g.test_delete_tuple_missing_from_built_index = function(cg)
+    t.tarantool.skip_if_not_debug()
+    t.skip_if(cg.params.engine ~= 'memtx', 'bitset and rtree are memtx only')
+    cg.server:exec(function()
+        local fiber = require('fiber')
+        local errinj = box.error.injection
+        for _, type in ipairs({'bitset', 'rtree'}) do
+            local s = box.schema.space.create('test')
+            s:create_index('pk')
+            local function tuple(i)
+                return {i, type == 'bitset' and i % 7 or {i % 7, i % 5}}
+            end
+            for i = 1, 2000 do
+                s:replace(tuple(i))
+            end
+            local builder = fiber.new(function()
+                local parts = type == 'bitset' and {{2, 'unsigned'}} or
+                              {{2, 'array'}}
+                s:create_index('sk', {type = type, parts = parts,
+                                      unique = false})
+            end)
+            builder:set_joinable(true)
+            -- Start the background index build.
+            fiber.yield()
+
+            -- The tuple is ahead of the build cursor, so the delete is
+            -- skipped.
+            errinj.set('ERRINJ_WAL_DELAY', true)
+            local deleter = fiber.new(function()
+                t.assert_error_msg_content_equals('Failed to write to disk',
+                                                  s.delete, s, {1000})
+            end)
+            deleter:set_joinable(true)
+            fiber.yield()
+            -- Let the build pass the key, but not complete.
+            for _ = 1, 150 do
+                fiber.yield()
+            end
+            errinj.set('ERRINJ_BUILD_INDEX_DELAY', true)
+            errinj.set('ERRINJ_WAL_WRITE', true)
+            errinj.set('ERRINJ_WAL_DELAY', false)
+            deleter:join()
+            errinj.set('ERRINJ_WAL_WRITE', false)
+
+            s:delete{1000}
+            errinj.set('ERRINJ_BUILD_INDEX_DELAY', false)
+            local ok, err = builder:join()
+            t.assert(ok, err)
+            t.assert_equals(s.index.sk:count(), s.index.pk:count())
+            s:drop()
+        end
+    end)
+end

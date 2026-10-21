@@ -313,7 +313,9 @@ memtx_rtree_index_delete(struct index *base, struct memtx_index_entry entry,
 	struct rtree_rect rect;
 	if (extract_rectangle(&rect, entry.tuple, base->def) != 0)
 		return -1;
-	VERIFY(rtree_remove(&index->tree, &rect, entry.tuple));
+	/* The index being built may miss the tuple. */
+	if (!rtree_remove(&index->tree, &rect, entry.tuple))
+		return 0;
 	*result = entry;
 	return 0;
 }

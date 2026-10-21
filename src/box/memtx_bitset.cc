@@ -286,13 +286,16 @@ memtx_bitset_index_delete(struct index *base, struct memtx_index_entry entry,
 			  struct memtx_index_entry *result)
 {
 	struct memtx_bitset_index *index = (struct memtx_bitset_index *)base;
+	*result = memtx_index_entry_null;
 	assert(entry.tuple != NULL);
 #ifndef OLD_GOOD_BITSET
 	uint32_t value = memtx_bitset_index_tuple_to_value(index, entry.tuple);
 #else /* #ifndef OLD_GOOD_BITSET */
 	size_t value = tuple_to_value(entry.tuple);
 #endif /* #ifndef OLD_GOOD_BITSET */
-	VERIFY(tt_bitset_index_contains_value(&index->index, (size_t)value));
+	/* The index being built may miss the tuple. */
+	if (!tt_bitset_index_contains_value(&index->index, (size_t)value))
+		return 0;
 	result->tuple = entry.tuple;
 	tt_bitset_index_remove_value(&index->index, value);
 #ifndef OLD_GOOD_BITSET
